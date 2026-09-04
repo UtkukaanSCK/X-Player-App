@@ -1,0 +1,150 @@
+appId: com.utkukaan.xplayer
+productName: X-Player
+copyright: Copyright (c) 2026 Utku Kaan
+
+directories:
+  output: release
+  buildResources: build
+
+# Where a built installer goes. Inert until the repository exists and GH_TOKEN
+# is set; `npm run dist` still builds locally without touching it.
+publish:
+  provider: github
+  owner: UtkukaanSCK
+  repo: X-Player-App
+  releaseType: draft
+
+files:
+  - out/**/*
+  - package.json
+
+# ffmpeg and ffprobe ship inside the installer so the first launch works with no
+# network and no waiting. Run `npm run ffmpeg` to stage them from this machine.
+#
+# They are staged from the machine doing the build, so a package has to be built
+# on the platform it targets. There is no cross-building here and pretending
+# otherwise would produce installers carrying the wrong binaries.
+extraResources:
+  - from: resources/ffmpeg
+    to: ffmpeg
+    filter:
+      - '**/*'
+
+# The mimeType entries are what Linux desktops read; Windows and macOS use the
+# extension and the role. All three come from this one list.
+fileAssociations:
+  - ext: mkv
+    description: Matroska Video
+    mimeType: video/x-matroska
+    role: Viewer
+  - ext: mp4
+    description: MPEG-4 Video
+    mimeType: video/mp4
+    role: Viewer
+  - ext: avi
+    description: AVI Video
+    mimeType: video/x-msvideo
+    role: Viewer
+  - ext: mov
+    description: QuickTime Video
+    mimeType: video/quicktime
+    role: Viewer
+  - ext: webm
+    description: WebM Video
+    mimeType: video/webm
+    role: Viewer
+  - ext: m4v
+    description: MPEG-4 Video
+    mimeType: video/x-m4v
+    role: Viewer
+  - ext: ts
+    description: MPEG Transport Stream
+    mimeType: video/mp2t
+    role: Viewer
+  - ext: m2ts
+    description: Blu-ray Transport Stream
+    mimeType: video/mp2t
+    role: Viewer
+  - ext: wmv
+    description: Windows Media Video
+    mimeType: video/x-ms-wmv
+    role: Viewer
+  - ext: flv
+    description: Flash Video
+    mimeType: video/x-flv
+    role: Viewer
+  - ext: mpg
+    description: MPEG Video
+    mimeType: video/mpeg
+    role: Viewer
+  - ext: mpeg
+    description: MPEG Video
+    mimeType: video/mpeg
+    role: Viewer
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: X-Player-${version}-Setup.${ext}
+
+nsis:
+  # build/installer.nsh adds the "open video files with X-Player" page and the
+  # Capabilities entry Windows needs before it will list the app under
+  # Settings > Default apps at all.
+  include: build/installer.nsh
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: X-Player
+
+mac:
+  category: public.app-category.video
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  artifactName: X-Player-${version}-${arch}.${ext}
+  darkModeSupport: true
+  # Signing needs an Apple Developer identity this project does not have. An
+  # unsigned build still runs, but Gatekeeper blocks the first launch until the
+  # user opens it from the context menu - see the README. Turning the hardened
+  # runtime on without signing would make that worse, not better.
+  identity: null
+  hardenedRuntime: false
+  extendInfo:
+    # Files opened from Finder arrive through the open-file event rather than
+    # the command line, which main.ts already listens for.
+    NSHighResolutionCapable: true
+
+dmg:
+  artifactName: X-Player-${version}-${arch}.${ext}
+
+linux:
+  category: AudioVideo;Video;Player
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  artifactName: X-Player-${version}-${arch}.${ext}
+  synopsis: Plays any video file, straight away
+  description: >-
+    A video player that opens whatever you give it. MKV, AVI, HEVC, DTS and the
+    rest start playing in about a second, without converting anything in advance
+    and without writing files next to yours.
+
+deb:
+  # ffmpeg travels inside the package, so these are only what Electron itself
+  # needs. Listing ffmpeg here as well would install a second copy nobody uses.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libsecret-1-0

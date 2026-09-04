@@ -1,0 +1,615 @@
+/*
+ * The app is a case around the picture, so it stays quiet: neutral graphite,
+ * one warm accent, and technical facts set in mono so they read as readings off
+ * an instrument rather than as prose.
+ */
+
+:root {
+  --graphite-900: #0b0b0d;
+  --graphite-850: #111214;
+  --graphite-800: #17181b;
+  --graphite-700: #212327;
+  --line: #2a2c31;
+  --paper: #f2f0eb;
+  --muted: #8e8f95;
+  --amber: #ffb020;
+  --signal: #e5484d;
+  --direct: #4cc38a;
+
+  --ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', 'SF Mono', Menlo, monospace;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--graphite-900);
+  color: var(--paper);
+  font-family: var(--ui);
+  font-size: 14px;
+  overflow: hidden;
+  /* Text selection in a media player is only ever an accident. */
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  color: var(--paper);
+}
+
+.shell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  /* A grid item will not shrink below its content unless the track says it may.
+     Without this the video's own width pushes the queue off the window edge. */
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------- status */
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 44px;
+  padding: 0 12px 0 14px;
+  background: var(--graphite-850);
+  border-bottom: 1px solid var(--line);
+  /* The strip is a drag handle, which is what a frameless-feeling app needs. */
+  -webkit-app-region: drag;
+}
+
+.status button {
+  -webkit-app-region: no-drag;
+}
+
+.status-id {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+
+.wordmark {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-size: 13px;
+  color: var(--paper);
+}
+
+.status-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.status-pos {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  flex: none;
+}
+
+.status-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.status-tech {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.chip-direct {
+  color: var(--direct);
+  border-color: color-mix(in srgb, var(--direct) 35%, transparent);
+}
+
+.chip-transcode {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 35%, transparent);
+}
+
+.chip-busy {
+  color: var(--paper);
+}
+
+.status-actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.ghost {
+  padding: 5px 11px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.ghost:hover {
+  background: var(--graphite-800);
+  color: var(--paper);
+}
+
+.ghost[aria-pressed='true'] {
+  background: var(--graphite-700);
+  border-color: var(--line);
+  color: var(--amber);
+}
+
+.primary {
+  padding: 9px 18px;
+  background: var(--amber);
+  border: none;
+  border-radius: 8px;
+  color: #1a1206;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.primary:hover {
+  background: #ffc047;
+}
+
+.primary:disabled,
+.ghost:disabled,
+.link:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.link {
+  padding: 2px 4px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link:hover:not(:disabled) {
+  color: var(--paper);
+}
+
+:where(button):focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------- body */
+
+.body {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+
+/* The player is the content; it takes the whole stage. */
+.stage .xp-root {
+  width: 100%;
+  height: 100%;
+}
+
+/*
+ * No focus ring around the player itself.
+ *
+ * On a web page it earns its place: the player is one focusable thing among
+ * many and a keyboard user needs to know where they are. Here the player is the
+ * entire window, it is focused the moment a file opens, and the ring is a
+ * rectangle drawn around everything. The controls inside keep their own rings,
+ * which is where a keyboard user actually needs one.
+ */
+.stage .xp-root:focus-visible {
+  outline: none;
+}
+
+/*
+ * One slot, two voices. A failure is red and announced assertively; the end of
+ * a queue is neither of those, and saying so in the error colour would make
+ * finishing a folder of episodes look like something went wrong.
+ */
+.banner {
+  position: absolute;
+  left: 50%;
+  bottom: 92px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 70%;
+  padding: 9px 10px 9px 14px;
+  border-radius: 8px;
+  background: rgba(18, 19, 22, 0.94);
+  border: 1px solid var(--line-bright);
+  color: var(--paper);
+  font-size: 13px;
+}
+
+.banner-bad {
+  background: rgba(20, 8, 8, 0.94);
+  border-color: color-mix(in srgb, var(--signal) 45%, transparent);
+  color: #ffd9da;
+}
+
+.banner-close {
+  flex: none;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.banner-close:hover {
+  opacity: 1;
+}
+
+/* -------------------------------------------------------------- empty state */
+
+/*
+ * Fills the stage rather than sitting in the middle of it. A centred box on a
+ * black stage leaves two seams where one near-black meets another, which reads
+ * as a rendering fault rather than as a layout.
+ */
+.empty {
+  display: grid;
+  grid-template-columns: minmax(0, 700px);
+  justify-content: center;
+  align-content: center;
+  justify-items: start;
+  gap: 40px;
+  width: 100%;
+  height: 100%;
+  padding: 48px 32px;
+  background: var(--graphite-900);
+  overflow-y: auto;
+}
+
+.empty-main h1 {
+  margin: 0 0 10px;
+  font-size: 34px;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  font-weight: 700;
+}
+
+.empty-sub {
+  margin: 0 0 24px;
+  max-width: 52ch;
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.empty-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.empty-default {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.empty-problem {
+  margin: 18px 0 0;
+  padding: 9px 13px;
+  border-left: 2px solid var(--signal);
+  background: rgba(229, 72, 77, 0.08);
+  color: #ffc9cb;
+  font-size: 13px;
+}
+
+.empty-recent {
+  width: 100%;
+  max-width: 520px;
+}
+
+.empty-recent-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.empty-recent h2,
+.queue-head h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.empty-recent ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.empty-recent li button {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  width: 100%;
+  padding: 9px 6px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.empty-recent li button:hover {
+  background: var(--graphite-850);
+}
+
+.recent-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+}
+
+.recent-when {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.empty-diag {
+  margin: 0;
+  max-width: 60ch;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.diag-bad {
+  color: #ffc9cb;
+}
+
+/* -------------------------------------------------------------------- queue */
+
+.queue {
+  flex: none;
+  width: 288px;
+  display: flex;
+  flex-direction: column;
+  background: var(--graphite-850);
+  border-left: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.queue-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 14px 14px 10px;
+}
+
+.queue-head-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.queue-empty {
+  margin: 0;
+  padding: 4px 14px 14px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.queue-list {
+  flex: 1;
+  margin: 0;
+  padding: 0 0 12px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.queue-list li button {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 14px;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  text-align: left;
+  color: var(--muted);
+}
+
+.queue-list li button:hover {
+  background: var(--graphite-800);
+  color: var(--paper);
+}
+
+.queue-list li[aria-current='true'] button {
+  border-left-color: var(--amber);
+  color: var(--paper);
+  background: var(--graphite-800);
+}
+
+.queue-num {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding-top: 1px;
+  color: var(--muted);
+}
+
+.queue-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------- queue reordering */
+
+.queue-list li {
+  /* The insertion line is drawn on the row it would land above. */
+  position: relative;
+}
+
+.queue-list li[draggable='true'] .queue-row {
+  cursor: grab;
+}
+
+.queue-list li[data-dragging='true'] {
+  opacity: 0.4;
+}
+
+.queue-list li[data-drop]::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  background: var(--amber);
+  pointer-events: none;
+}
+
+.queue-list li[data-drop='before']::after {
+  top: -1px;
+}
+
+.queue-list li[data-drop='after']::after {
+  bottom: -1px;
+}
+
+.queue-hint {
+  margin: 0;
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------------------------- veil */
+
+.veil {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(11, 11, 13, 0.72);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  z-index: 50;
+}
+
+.veil-card {
+  padding: 20px 34px;
+  border: 1px dashed color-mix(in srgb, var(--amber) 60%, transparent);
+  border-radius: 12px;
+  background: var(--graphite-850);
+  color: var(--amber);
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* A fact about the file, not a state of the app: quieter than the route chip. */
+.chip-quiet {
+  border-color: var(--line-bright);
+  color: var(--muted);
+}
+
+/*
+ * The queue yields before the video does.
+ *
+ * A fixed 288px panel against the window minimum left the stage under the
+ * player's own 560px breakpoint, which quietly removed the volume slider and
+ * both skip buttons on a desktop. Narrowing the panel keeps the stage above it.
+ */
+@media (max-width: 1000px) {
+  .queue {
+    width: 240px;
+  }
+}

@@ -1,0 +1,133 @@
+name: Release
+
+# Builds an installer on each platform and attaches it to a draft release.
+#
+# This exists because a package has to be built on the platform it targets:
+# ffmpeg is staged into the app rather than assumed to be on the user's machine,
+# and there is no cross-building. Without CI, only the platform on the developer's
+# desk can ever ship.
+#
+# NOTE: this workflow has never been run. It is written from the documented
+# behaviour of the actions it uses, and the first run should be a
+# `workflow_dispatch` on a throwaway tag rather than a real release.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (must already exist)'
+        required: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing should not throw away the others: a Windows
+      # installer is still worth publishing if the macOS build breaks.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            target: --win
+          - os: macos-latest
+            name: macOS
+            target: --mac
+          - os: ubuntu-latest
+            name: Linux
+            target: --linux
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The player is a sibling checkout in development. On a runner it has to
+      # come from the published package, which npm ci already installed.
+      - name: Check the player is available
+        shell: bash
+        run: test -f node_modules/x-player/dist/lib/x-player.es.js || (echo "x-player has no build output" && exit 1)
+
+      #
+      # ffmpeg has to be a static build.
+      #
+      # What a package manager installs is dynamically linked against libraries
+      # that exist on this runner and nowhere else, so a package built with it
+      # would die on a user's machine with a missing library and look like the
+      # app was broken. stage-ffmpeg.mjs checks for exactly that and fails the
+      # build rather than shipping one.
+      #
+      # These sources publish rolling builds rather than stable versioned URLs,
+      # so the version that ships is whatever was current on build day. The
+      # binaries are run before packaging, which is the part that matters.
+      #
+      - name: Fetch static ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o ffmpeg.tar.xz
+          mkdir -p ffmpeg-static
+          tar -xf ffmpeg.tar.xz --strip-components=1 -C ffmpeg-static
+          echo "FFMPEG_DIR=$PWD/ffmpeg-static" >> "$GITHUB_ENV"
+
+      - name: Fetch static ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p ffmpeg-static
+          curl -fsSL https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip -o ffmpeg.zip
+          curl -fsSL https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip -o ffprobe.zip
+          unzip -o -q ffmpeg.zip -d ffmpeg-static
+          unzip -o -q ffprobe.zip -d ffmpeg-static
+          chmod +x ffmpeg-static/ffmpeg ffmpeg-static/ffprobe
+          echo "FFMPEG_DIR=$PWD/ffmpeg-static" >> "$GITHUB_ENV"
+
+      - name: Fetch static ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl -fsSL https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -o ffmpeg.zip
+          unzip -o -q ffmpeg.zip -d ffmpeg-unpacked
+          BIN=$(find ffmpeg-unpacked -name 'ffmpeg.exe' -printf '%h\n' | head -1)
+          echo "FFMPEG_DIR=$(cygpath -w "$PWD/$BIN")" >> "$GITHUB_ENV"
+
+      - name: Stage ffmpeg, and prove it runs
+        run: node scripts/stage-ffmpeg.mjs --from "${{ env.FFMPEG_DIR }}"
+
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+      - name: Build the installer
+        run: npx electron-builder ${{ matrix.target }} --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Kept even when publishing succeeds, so a broken draft can be compared
+      # against what the runner actually produced.
+      - name: Keep the artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-installers
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: warn
+          retention-days: 14

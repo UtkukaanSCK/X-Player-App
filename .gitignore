@@ -1,0 +1,16 @@
+node_modules
+out
+release
+
+# ffmpeg is staged from the build machine, not committed. It is 286 MB and
+# differs per platform: `npm run ffmpeg` puts it here.
+resources/ffmpeg
+
+# Built locally by `npm run fixtures` from the player's demo clip.
+fixtures
+
+*.log
+.DS_Store
+
+# TypeScript incremental build caches.
+*.tsbuildinfo
