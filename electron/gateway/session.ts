@@ -183,10 +183,19 @@ export class Session {
 
     for (;;) {
       if (this.disposed) throw new Error('session closed')
-      if (this.runFailed) throw new Error(this.runFailed)
 
+      // Whether this segment is finished comes before whether a run has failed.
+      // Once the muxer has moved on to the next segment this one is whole, and a
+      // failure after that changes nothing about it. In the other order a single
+      // failed run made every segment already on disk unservable, until a request
+      // for a missing one happened to start a new run - so a viewer rewinding into
+      // KEEP_BEHIND got an error for each segment sitting there, complete.
       const nextExists = await exists(this.segmentPath(n + 1))
       if (nextExists) return
+
+      // Still ahead of the branch below, which would otherwise take a half-written
+      // segment left by a failed run as "all there is" and serve a corrupt fragment.
+      if (this.runFailed) throw new Error(this.runFailed)
 
       const finished = this.proc === null
       if (finished && (await exists(this.segmentPath(n)))) {
