@@ -77,30 +77,46 @@ jobs:
       # binaries are run before packaging, which is the part that matters.
       #
       # Each download is checked against the digest its own publisher puts
-      # beside it, so a corrupted or substituted transfer fails the build rather
+      # beside it, so a corrupted or truncated transfer fails the build rather
       # than being packaged into an installer and shipped. Being clear about
-      # what that is worth: it authenticates the transfer, not the publisher. A
-      # compromise at the source would produce a matching digest and pass. The
-      # stronger version - pinning a digest in this repository - is deliberately
-      # not what this does, because these URLs roll and every new ffmpeg release
-      # would then break the release build until someone updated it by hand.
+      # what that is worth: it authenticates the transfer, not the publisher.
+      # The digest travels from the same host over the same connection as the
+      # archive, so anyone who can swap one can swap the other - substitution at
+      # the source is not what this catches, and HTTPS already covers a network
+      # attacker. The stronger version - pinning a digest in this repository -
+      # is deliberately not what this does, because these URLs roll and every
+      # new ffmpeg release would then break the release build until someone
+      # updated it by hand.
       #
       # The three publishers offer different things, and these steps use what
       # each actually has. Checked rather than assumed:
-      #   johnvansickle  .md5     yes     .sha256  404
-      #   gyan.dev       .sha256  yes     .md5     404
+      #   johnvansickle  .md5     200     .sha256  404
+      #   gyan.dev       .sha256  303 ->  .../packages/ffmpeg-<version>-essentials_build.zip.sha256
       #   evermeet.cx    nothing - its JSON API offers only a GPG .sig and a size
+      #
+      # gyan's is a redirect to a versioned file rather than a file, which -L
+      # follows. Worth knowing for two reasons: a redirect target can move
+      # independently of the URL pinned here, and the archive and its digest are
+      # fetched as two requests that each resolve to a version. If the build
+      # rolls between them the digest belongs to a different archive and the
+      # check fails looking exactly like corruption. Narrow window, real cause,
+      # and cheaper to recognise here than to diagnose from a red release.
       #
       # So macOS is the gap, and it is a real one. Closing it means trusting and
       # pinning evermeet's signing key, which is a decision worth making
       # deliberately rather than smuggling in here.
       #
+      # Every fetch retries, which matters more now than it did. Before, a
+      # half-received archive went on to be packaged; now it fails the build, so
+      # without retries a flaky runner and a bad file look identical from the
+      # log. Retrying makes a failure here mean what the check is for.
+      #
       - name: Fetch static ffmpeg (Linux)
         if: runner.os == 'Linux'
         run: |
           NAME=ffmpeg-release-amd64-static.tar.xz
-          curl -fsSL "https://johnvansickle.com/ffmpeg/releases/$NAME" -o "$NAME"
-          curl -fsSL "https://johnvansickle.com/ffmpeg/releases/$NAME.md5" -o "$NAME.md5"
+          curl -fsSL --retry 3 --retry-all-errors "https://johnvansickle.com/ffmpeg/releases/$NAME" -o "$NAME"
+          curl -fsSL --retry 3 --retry-all-errors "https://johnvansickle.com/ffmpeg/releases/$NAME.md5" -o "$NAME.md5"
           # The published file names the archive, so it is checked where it sits.
           md5sum -c "$NAME.md5"
           mkdir -p ffmpeg-static
@@ -113,8 +129,8 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p ffmpeg-static
-          curl -fsSL https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip -o ffmpeg.zip
-          curl -fsSL https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip -o ffprobe.zip
+          curl -fsSL --retry 3 --retry-all-errors https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip -o ffmpeg.zip
+          curl -fsSL --retry 3 --retry-all-errors https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip -o ffprobe.zip
           unzip -o -q ffmpeg.zip -d ffmpeg-static
           unzip -o -q ffprobe.zip -d ffmpeg-static
           chmod +x ffmpeg-static/ffmpeg ffmpeg-static/ffprobe
@@ -124,8 +140,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          curl -fsSL https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -o ffmpeg.zip
-          curl -fsSL https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256 -o ffmpeg.zip.sha256
+          curl -fsSL --retry 3 --retry-all-errors https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -o ffmpeg.zip
+          curl -fsSL --retry 3 --retry-all-errors https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256 -o ffmpeg.zip.sha256
           # Published as bare hex with no file name and no trailing newline, so
           # the line sha256sum wants is assembled here.
           echo "$(cat ffmpeg.zip.sha256)  ffmpeg.zip" | sha256sum -c -
