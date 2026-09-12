@@ -7,9 +7,12 @@ name: Release
 # and there is no cross-building. Without CI, only the platform on the developer's
 # desk can ever ship.
 #
-# NOTE: this workflow has never been run. It is written from the documented
-# behaviour of the actions it uses, and the first run should be a
-# `workflow_dispatch` on a throwaway tag rather than a real release.
+# NOTE: this workflow has run once, on v1.0.0 (2026-09-04), and failed on all
+# three platforms at typecheck - the lockfile pinned a player from before the
+# API the app calls. An earlier version of this comment said it had never run,
+# and that went unquestioned through a review, because a comment is easy to
+# believe. Nothing past typecheck has run on a runner yet, so the advice stands:
+# make the next run a `workflow_dispatch` on a throwaway tag, not a real release.
 
 on:
   push:
@@ -28,8 +31,82 @@ permissions:
   contents: write
 
 jobs:
+  #
+  # The gateway's security checks, as a gate every platform waits for.
+  #
+  # e2e/security.mjs is what stands between this app and "a way to read
+  # someone's disk from a web page", in its own words, and nothing on the
+  # release path ran it. It runs once, here, and `build` below needs it. The
+  # gateway is the same code on all three platforms, so a failure is a reason to
+  # publish nothing - putting the check inside the matrix would have stopped the
+  # Windows installer alone while Linux and macOS published anyway.
+  #
+  # Windows, because that is where each part has been exercised locally against
+  # what a runner will use:
+  #   - gyan 9.0.1 essentials, downloaded and checked with the same sha256sum
+  #     line as below (ffmpeg.zip: OK), carries libvpx-vp9, libopus, testsrc2
+  #     and sine
+  #   - the synthetic fixture built with that ffmpeg is vp9 854x480 + opus, 40 s
+  #   - the suite passed all seventeen checks with that ffmpeg and ffprobe
+  # What has NOT been exercised is a hosted runner opening an Electron window.
+  # That is known only once this runs.
+  #
+  # The fixture is synthetic because the real ones are cut from a clip in the
+  # sibling player checkout, which a runner does not have. The security suite
+  # never looks at content, only at what the gateway agrees to serve.
+  #
+  # The fetch step repeats the Windows one in `build` on purpose; if either
+  # changes, the other has to.
+  #
+  security:
+    name: Security checks
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Fetch static ffmpeg
+        shell: bash
+        run: |
+          curl -fsSL --retry 3 --retry-all-errors https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -o ffmpeg.zip
+          curl -fsSL --retry 3 --retry-all-errors https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256 -o ffmpeg.zip.sha256
+          echo "$(cat ffmpeg.zip.sha256)  ffmpeg.zip" | sha256sum -c -
+          unzip -o -q ffmpeg.zip -d ffmpeg-unpacked
+          BIN=$(find ffmpeg-unpacked -name 'ffmpeg.exe' -printf '%h\n' | head -1)
+          echo "FFMPEG_DIR=$(cygpath -w "$PWD/$BIN")" >> "$GITHUB_ENV"
+
+      - name: Stage ffmpeg, and prove it runs
+        run: node scripts/stage-ffmpeg.mjs --from "${{ env.FFMPEG_DIR }}"
+
+      - name: Compile main, preload and renderer
+        run: npm run build
+
+      # XPLAYER_FFMPEG and XPLAYER_FFPROBE are the variables the app reads, so
+      # the fixture script and the gateway both use the staged binaries rather
+      # than whatever is on PATH. Pointed at missing files locally, the script
+      # and the suite both failed; neither quietly fell back.
+      - name: Build the security fixture
+        shell: bash
+        run: |
+          export XPLAYER_FFMPEG="$(cygpath -w "$PWD/resources/ffmpeg/ffmpeg.exe")"
+          node scripts/make-fixtures.mjs --synthetic --only vp9-opus.webm
+
+      - name: Run the gateway's security checks
+        shell: bash
+        run: |
+          export XPLAYER_FFMPEG="$(cygpath -w "$PWD/resources/ffmpeg/ffmpeg.exe")"
+          export XPLAYER_FFPROBE="$(cygpath -w "$PWD/resources/ffmpeg/ffprobe.exe")"
+          node e2e/security.mjs
+
   build:
     name: ${{ matrix.name }}
+    needs: security
     runs-on: ${{ matrix.os }}
     strategy:
       # One platform failing should not throw away the others: a Windows
@@ -172,8 +249,8 @@ jobs:
       # That is what every installer this workflow published would have done.
       # package.json's own `dist` and `release` scripts are
       # `npm run build && electron-builder`; this workflow had the second half
-      # without the first, and its header says it has never run, which is why
-      # nothing caught it.
+      # without the first. No run ever reached it: the only one, on v1.0.0,
+      # failed earlier, at typecheck.
       #
       - name: Compile main, preload and renderer
         run: npm run build
