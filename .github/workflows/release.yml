@@ -76,15 +76,40 @@ jobs:
       # so the version that ships is whatever was current on build day. The
       # binaries are run before packaging, which is the part that matters.
       #
+      # Each download is checked against the digest its own publisher puts
+      # beside it, so a corrupted or substituted transfer fails the build rather
+      # than being packaged into an installer and shipped. Being clear about
+      # what that is worth: it authenticates the transfer, not the publisher. A
+      # compromise at the source would produce a matching digest and pass. The
+      # stronger version - pinning a digest in this repository - is deliberately
+      # not what this does, because these URLs roll and every new ffmpeg release
+      # would then break the release build until someone updated it by hand.
+      #
+      # The three publishers offer different things, and these steps use what
+      # each actually has. Checked rather than assumed:
+      #   johnvansickle  .md5     yes     .sha256  404
+      #   gyan.dev       .sha256  yes     .md5     404
+      #   evermeet.cx    nothing - its JSON API offers only a GPG .sig and a size
+      #
+      # So macOS is the gap, and it is a real one. Closing it means trusting and
+      # pinning evermeet's signing key, which is a decision worth making
+      # deliberately rather than smuggling in here.
+      #
       - name: Fetch static ffmpeg (Linux)
         if: runner.os == 'Linux'
         run: |
-          curl -fsSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o ffmpeg.tar.xz
+          NAME=ffmpeg-release-amd64-static.tar.xz
+          curl -fsSL "https://johnvansickle.com/ffmpeg/releases/$NAME" -o "$NAME"
+          curl -fsSL "https://johnvansickle.com/ffmpeg/releases/$NAME.md5" -o "$NAME.md5"
+          # The published file names the archive, so it is checked where it sits.
+          md5sum -c "$NAME.md5"
           mkdir -p ffmpeg-static
-          tar -xf ffmpeg.tar.xz --strip-components=1 -C ffmpeg-static
+          tar -xf "$NAME" --strip-components=1 -C ffmpeg-static
           echo "FFMPEG_DIR=$PWD/ffmpeg-static" >> "$GITHUB_ENV"
 
-      - name: Fetch static ffmpeg (macOS)
+      # No digest is published for these, so nothing is verified here. Said out
+      # loud rather than left to be inferred from the absence of a check.
+      - name: Fetch static ffmpeg (macOS, unverified - see above)
         if: runner.os == 'macOS'
         run: |
           mkdir -p ffmpeg-static
@@ -100,6 +125,10 @@ jobs:
         shell: bash
         run: |
           curl -fsSL https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -o ffmpeg.zip
+          curl -fsSL https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256 -o ffmpeg.zip.sha256
+          # Published as bare hex with no file name and no trailing newline, so
+          # the line sha256sum wants is assembled here.
+          echo "$(cat ffmpeg.zip.sha256)  ffmpeg.zip" | sha256sum -c -
           unzip -o -q ffmpeg.zip -d ffmpeg-unpacked
           BIN=$(find ffmpeg-unpacked -name 'ffmpeg.exe' -printf '%h\n' | head -1)
           echo "FFMPEG_DIR=$(cygpath -w "$PWD/$BIN")" >> "$GITHUB_ENV"
