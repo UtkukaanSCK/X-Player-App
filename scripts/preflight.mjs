@@ -89,6 +89,39 @@ for (const [name, script] of [
   check(name, ok, ok ? '' : `run: npm run ${script}`)
 }
 
+/* -------------------------------------------------------- the gateway's guard */
+
+/*
+ * The security suite is the only thing standing between this app and "a way to
+ * read someone's disk from a web page", in its own words, and until now it ran
+ * in no gate at all - not here, not in the release workflow. Everything above
+ * could pass while the gateway served files it should refuse.
+ *
+ * Only the security suite, not the whole e2e. It has no timing thresholds, so it
+ * passes or fails on what the gateway does rather than on how fast this machine
+ * is. The playback suite does have them - first frame, seek and stall budgets -
+ * and it failed a local run for a reason not yet diagnosed; gating a release on
+ * it before that is understood would block releases on a clock.
+ *
+ * It launches the built app, so it builds first. That also means the app being
+ * checked is the one compiled from the source in front of you, not whatever an
+ * earlier build happened to leave in out/.
+ */
+const SECURITY_FIXTURE = join('fixtures', 'vp9-opus.webm')
+const hasSecurityFixture = existsSync(SECURITY_FIXTURE)
+check('the security fixture exists', hasSecurityFixture, hasSecurityFixture ? '' : 'run: npm run fixtures')
+
+if (hasSecurityFixture) {
+  let ok = true
+  try {
+    execSync('npm run build', { stdio: 'ignore', timeout: 300_000 })
+    execSync('node e2e/security.mjs', { stdio: 'ignore', timeout: 300_000 })
+  } catch {
+    ok = false
+  }
+  check("the gateway's security checks pass", ok, ok ? '' : 'run: npm run build && node e2e/security.mjs')
+}
+
 console.log()
 if (failures.length > 0) {
   console.error(`Not ready: ${failures.length} check(s) failed.`)
