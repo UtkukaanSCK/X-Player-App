@@ -16,6 +16,36 @@ const run = promisify(execFile)
 const SOURCE = resolve(import.meta.dirname, '../../public/media/demo-480p.mp4')
 const OUT = resolve(import.meta.dirname, '../fixtures')
 
+/*
+ * Two options, so the security suite can run where the player repository does
+ * not. A release runner checks out this repository alone, and SOURCE is a path
+ * into the sibling checkout - it is simply not there to read.
+ *
+ * `--only <file>[,<file>]` builds just the named fixtures. `--synthetic` draws
+ * the picture and sound from ffmpeg's own test sources instead of SOURCE.
+ *
+ * Synthetic is fine for a fixture whose content nothing inspects. The security
+ * suite needs a VP9 and Opus WebM the gateway will serve directly, and measured
+ * against the real one it came out the same shape - vp9 854x480, opus, webm,
+ * 40.0 s - with all seventeen security checks passing on it. It is not fine for
+ * a case that stream-copies the source's video, since there is no source to
+ * copy, so those refuse rather than quietly producing something else.
+ *
+ * The binary honours XPLAYER_FFMPEG, the variable the app itself reads, so a
+ * runner can point both at the ffmpeg it staged instead of hoping one is on
+ * PATH.
+ */
+const argv = process.argv.slice(2)
+const SYNTHETIC = argv.includes('--synthetic')
+const onlyAt = argv.indexOf('--only')
+const ONLY = onlyAt >= 0 ? (argv[onlyAt + 1] ?? '').split(',').filter(Boolean) : null
+const FFMPEG_BIN = process.env.XPLAYER_FFMPEG || 'ffmpeg'
+
+const SYNTHETIC_INPUT = [
+  '-f', 'lavfi', '-i', 'testsrc2=size=854x480:rate=24',
+  '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
+]
+
 /** Kept short: the suite plays 20 seconds of each and seeks to 75%. */
 const DURATION = 40
 
@@ -65,11 +95,41 @@ const CASES = [
 ]
 
 async function ffmpeg(args) {
-  await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { maxBuffer: 32 << 20 })
+  await run(FFMPEG_BIN, ['-hide_banner', '-loglevel', 'error', '-y', ...args], { maxBuffer: 32 << 20 })
+}
+
+function fail(message) {
+  console.error(message)
+  process.exit(1)
 }
 
 async function main() {
-  if (!existsSync(SOURCE)) {
+  /*
+   * An unknown name is an error rather than nothing to do. A typo in a CI step
+   * would otherwise build no fixture, report success, and leave the suite to
+   * fail later on a missing file with no hint of why.
+   */
+  if (ONLY) {
+    if (ONLY.length === 0) fail('--only needs a fixture name')
+    const known = [...CASES.map((c) => c.file), 'multi.mkv']
+    const unknown = ONLY.filter((f) => !known.includes(f))
+    if (unknown.length > 0) fail(`Not a fixture this script builds: ${unknown.join(', ')}`)
+  }
+  const wanted = (file) => !ONLY || ONLY.includes(file)
+  const cases = CASES.filter((c) => wanted(c.file))
+
+  if (SYNTHETIC) {
+    const needSource = [
+      ...cases.filter((c) => c.args.includes('copy')).map((c) => c.file),
+      ...(wanted('multi.mkv') ? ['multi.mkv'] : []),
+    ]
+    if (needSource.length > 0) {
+      fail(
+        `--synthetic cannot build ${needSource.join(', ')}: stream-copying the source's video needs a source.\n` +
+          'Name the fixtures that re-encode with --only.',
+      )
+    }
+  } else if (!existsSync(SOURCE)) {
     console.error(`Source clip not found: ${SOURCE}`)
     process.exit(1)
   }
@@ -78,23 +138,27 @@ async function main() {
   const srtPath = join(OUT, 'embedded.srt')
   writeFileSync(srtPath, SUBTITLE_SRT, 'utf8')
 
-  for (const c of CASES) {
+  for (const c of cases) {
     const target = join(OUT, c.file)
     if (existsSync(target)) {
       console.log(`= ${c.file.padEnd(18)} already there`)
       continue
     }
-    process.stdout.write(`+ ${c.file.padEnd(18)} ${c.why} ... `)
+    process.stdout.write(`+ ${c.file.padEnd(18)} ${c.why}${SYNTHETIC ? ' (synthetic)' : ''} ... `)
     // -stream_loop makes a 40 second clip out of a shorter source, so seeking
-    // to 75% lands somewhere the encoder has not been yet.
-    await ffmpeg(['-stream_loop', '-1', '-i', SOURCE, '-t', String(DURATION), ...c.args, target])
+    // to 75% lands somewhere the encoder has not been yet. The synthetic
+    // sources are endless, so -shortest is what ends them at DURATION.
+    const input = SYNTHETIC ? SYNTHETIC_INPUT : ['-stream_loop', '-1', '-i', SOURCE]
+    await ffmpeg([...input, '-t', String(DURATION), ...c.args, ...(SYNTHETIC ? ['-shortest'] : []), target])
     console.log(`${(statSync(target).size / 1024 / 1024).toFixed(1)} MB`)
   }
 
   // Two audio tracks and an embedded subtitle: the file that exercises the
   // audio menu, the subtitle extraction and position keeping across a switch.
   const multi = join(OUT, 'multi.mkv')
-  if (existsSync(multi)) {
+  if (!wanted('multi.mkv')) {
+    // Not asked for.
+  } else if (existsSync(multi)) {
     console.log(`= ${'multi.mkv'.padEnd(18)} already there`)
   } else {
     process.stdout.write(`+ ${'multi.mkv'.padEnd(18)} Two audio tracks plus an embedded subtitle ... `)
