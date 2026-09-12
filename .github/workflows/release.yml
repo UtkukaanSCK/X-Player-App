@@ -111,6 +111,28 @@ jobs:
       - run: npm run lint
       - run: npm test
 
+      #
+      # Compile the app before packaging it. This is not a convenience step.
+      #
+      # electron-builder packages `out/**/*` and package.json, and `out` is
+      # gitignored - `git ls-files out` returns nothing. On a runner's fresh
+      # checkout it therefore does not exist, so without this the installer
+      # would ship package.json alone, with its `main` pointing at
+      # out/main/main.cjs, a file that is not in the package. Reproduced by
+      # deleting out/ locally and starting the app:
+      #
+      #   Error: Cannot find module '...\app\out\main\main.cjs'.
+      #   Please verify that the package.json has a valid "main" entry
+      #
+      # That is what every installer this workflow published would have done.
+      # package.json's own `dist` and `release` scripts are
+      # `npm run build && electron-builder`; this workflow had the second half
+      # without the first, and its header says it has never run, which is why
+      # nothing caught it.
+      #
+      - name: Compile main, preload and renderer
+        run: npm run build
+
       - name: Build the installer
         run: npx electron-builder ${{ matrix.target }} --publish always
         env:
