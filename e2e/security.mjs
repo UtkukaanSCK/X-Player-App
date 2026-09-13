@@ -6,9 +6,11 @@
  * opened cannot be named. If any of these ever start failing, the app has
  * become a way to read someone's disk from a web page.
  */
-import { join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { request } from 'node:http'
+import { randomBytes } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { join, parse, sep } from 'node:path'
 import { deliver, FIXTURES, launchApp } from './launch.mjs'
 /** The direct route keeps a plain HTTP URL on the element, which is what we probe. */
 const FIXTURE = 'vp9-opus.webm'
@@ -87,11 +89,16 @@ const raw = (path, headers = {}) =>
     const req = request(
       { host: '127.0.0.1', port: parsed.port, path, method: 'GET', headers: { range: 'bytes=0-64', ...headers } },
       (res) => {
-        res.resume()
-        done(res.statusCode)
+        // Enough of the body to tell a leaked canary from any other 200; the
+        // range header keeps a served file to 65 bytes in any case.
+        let body = ''
+        res.on('data', (chunk) => {
+          if (body.length < 256) body += chunk.toString()
+        })
+        res.on('end', () => done({ status: res.statusCode, body }))
       },
     )
-    req.on('error', (err) => done(`threw: ${err.message}`))
+    req.on('error', (err) => done({ status: `threw: ${err.message}`, body: '' }))
     req.end()
   })
 
@@ -103,24 +110,69 @@ const raw = (path, headers = {}) =>
  */
 const realPath = `${parsed.pathname}${parsed.search}`
 const rawReal = await raw(realPath)
-check('a request from outside the window reaches the file', rawReal === 206 || rawReal === 200, String(rawReal))
+check('a request from outside the window reaches the file', rawReal.status === 206 || rawReal.status === 200, String(rawReal.status))
 
 /*
- * Paths that climb out of the opened file, each carrying the valid token and the
- * right host, so the only thing that can refuse them is the routing.
+ * Traversal, tested against canaries this process plants rather than a file
+ * that happens to be on disk.
  *
- * 403 is deliberately not accepted. With a good token and a good host, a 403
- * would mean one of those guards had fired for some other reason, and a check
- * that counts that as success is back to passing on the wrong grounds.
+ * The earlier version aimed fixed-depth climbs at package.json. Whether that
+ * caught a leaking gateway depended entirely on where the gateway rooted its
+ * join and what sat above it: on this machine a stray package.json in the home
+ * directory made it pass, and on a fresh runner nothing did, so the check was
+ * green while testing nothing - the same accident as the "never been run"
+ * comment, one layer down. A canary removes the accident. The test writes a
+ * file, aims the request exactly at it, and only a gateway that served THAT
+ * file - proven by reading its own token back - counts as a leak.
+ *
+ * Two canaries, one beside the fixture and one in the temp directory, because a
+ * hosted runner can put the workspace and the temp dir on different drives and
+ * the gateway joins onto one of them. The climb is `..` thirty-two times: the
+ * extra steps stop at the drive root, so the request reaches the canary from
+ * wherever on that drive the gateway starts. Both %2F and %5C, because the app
+ * ships on Windows and a backslash walks straight past a filter written for
+ * forward slashes.
+ *
+ * Each canary is a precondition, not an assumption. If planting failed, or the
+ * file is not exactly where the request climbs to, every request 404s for a
+ * missing file and the checks pass having proven nothing - the hole the setup
+ * check above closes for the requester, closed here for the target. So before
+ * any traversal request the canary must exist and read its own token back. And
+ * 400/404 alone is not enough: a 200 is inspected for the token, so a leak that
+ * happens to carry an ordinary success code is still caught.
  */
 const fileBase = parsed.pathname.replace(/\/file$/, '')
-for (const [label, path] of [
-  ['dot segments', `${fileBase}/../../../../package.json${parsed.search}`],
-  ['percent-encoded dots', `${fileBase}/%2e%2e/%2e%2e/%2e%2e/package.json${parsed.search}`],
-  ['percent-encoded separators', `${fileBase}/..%2F..%2F..%2Fpackage.json${parsed.search}`],
-]) {
-  const got = await raw(path)
-  check(`a path that climbs out of the opened file is refused (${label})`, got === 400 || got === 404, String(got))
+const canaryToken = randomBytes(16).toString('hex')
+const driveless = (p) => p.slice(parse(p).root.length).split(sep).join('/')
+const canaryTemp = mkdtempSync(join(tmpdir(), 'xp-canary-'))
+const canaries = [
+  { where: 'beside the fixture', path: join(FIXTURES, `xp-canary-${canaryToken}.txt`) },
+  { where: 'in the temp directory', path: join(canaryTemp, `xp-canary-${canaryToken}.txt`) },
+]
+try {
+  for (const canary of canaries) {
+    writeFileSync(canary.path, canaryToken)
+    const planted = existsSync(canary.path) && readFileSync(canary.path, 'utf8') === canaryToken
+    check(`the canary ${canary.where} is planted before its traversal is tried`, planted, canary.path)
+    if (!planted) continue
+
+    const abs = driveless(canary.path)
+    for (const [label, climb, target] of [
+      ['percent-encoded separators', '..%2F'.repeat(32), abs],
+      ['percent-encoded backslashes', '..%5C'.repeat(32), abs.split('/').join('%5C')],
+    ]) {
+      const got = await raw(`${fileBase}/${climb}${target}${parsed.search}`)
+      const leaked = got.status === 200 && got.body.includes(canaryToken)
+      check(
+        `a climb to the canary ${canary.where} is refused (${label})`,
+        !leaked && (got.status === 400 || got.status === 404),
+        leaked ? `leaked ${got.body.slice(0, 40)}` : String(got.status),
+      )
+    }
+  }
+} finally {
+  for (const canary of canaries) rmSync(canary.path, { force: true })
+  rmSync(canaryTemp, { recursive: true, force: true })
 }
 
 /*
@@ -129,9 +181,9 @@ for (const [label, path] of [
  * a refusal here is the host guard and nothing else.
  */
 const otherHost = await raw(realPath, { host: 'evil.example.com' })
-check('a request naming another host is refused', otherHost === 403, String(otherHost))
+check('a request naming another host is refused', otherHost.status === 403, String(otherHost.status))
 const rebinding = await raw(realPath, { host: `attacker.test:${parsed.port}` })
-check('a rebinding host on the right port is refused', rebinding === 403, String(rebinding))
+check('a rebinding host on the right port is refused', rebinding.status === 403, String(rebinding.status))
 
 /*
  * No defaults on these. They used to read `?.nodeIntegration ?? false` and
