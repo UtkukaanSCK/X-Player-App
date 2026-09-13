@@ -61,8 +61,17 @@ jobs:
   security:
     name: Security checks
     runs-on: windows-latest
+    # This job publishes nothing and needs no write. Without an override it
+    # would inherit the workflow-wide contents: write, while running npm ci
+    # lifecycle scripts and a downloaded ffmpeg - so it is dropped to read here.
+    permissions:
+      contents: read
     steps:
+      # persist-credentials: false keeps the checkout token out of .git/config;
+      # nothing in this job talks to the remote after the clone.
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v5
         with:
