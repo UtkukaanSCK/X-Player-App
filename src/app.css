@@ -1,20 +1,32 @@
 /*
- * The app is a case around the picture, so it stays quiet: neutral graphite,
- * one warm accent, and technical facts set in mono so they read as readings off
- * an instrument rather than as prose.
+ * The app is a case around the picture, so it stays quiet.
+ *
+ * Neutral graphite rather than a black with a colour cast, one light button for
+ * the first thing to do, and no accent colour of the case's own: the amber
+ * belongs to the brand mark and to the player's controls, which draw it over
+ * the footage.
+ *
+ * Text contrast, measured with the WCAG formula against ground / surface /
+ * raised: ink 15.8 / 14.7 / 12.9, muted 7.2 / 6.7 / 5.9, bad 8.1 / 7.6 / 6.6.
+ * The control outline is 3.5 / 3.3 on the two surfaces it rests on, clearing
+ * the 3:1 a control's only boundary is asked for.
  */
 
 :root {
-  --graphite-900: #0b0b0d;
-  --graphite-850: #111214;
-  --graphite-800: #17181b;
-  --graphite-700: #212327;
-  --line: #2a2c31;
-  --paper: #f2f0eb;
-  --muted: #8e8f95;
-  --amber: #ffb020;
-  --signal: #e5484d;
-  --direct: #4cc38a;
+  --ground: #141416;
+  --surface: #1b1b1e;
+  --raised: #26262a;
+  --line: #2c2c31;
+  --line-bright: #3a3a40;
+  --control: #6b6b74;
+
+  --ink: #ededf0;
+  --muted: #a1a1aa;
+  --bad: #ff8a8a;
+
+  /* Route state, drawn as a dot beside the word that already says it. */
+  --direct: #63d39a;
+  --transcode: #f0b54a;
 
   --ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', 'SF Mono', Menlo, monospace;
@@ -34,13 +46,15 @@ body,
 
 body {
   margin: 0;
-  background: var(--graphite-900);
-  color: var(--paper);
+  background: var(--ground);
+  color: var(--ink);
   font-family: var(--ui);
   font-size: 14px;
+  line-height: 1.45;
   overflow: hidden;
   /* Text selection in a media player is only ever an accident. */
   user-select: none;
+  -webkit-font-smoothing: antialiased;
 }
 
 button {
@@ -49,10 +63,11 @@ button {
   cursor: pointer;
 }
 
+/* Encoder names and the like: the one place a monospace face is still right. */
 code {
   font-family: var(--mono);
-  font-size: 0.92em;
-  color: var(--paper);
+  font-size: 0.9em;
+  color: var(--ink);
 }
 
 .shell {
@@ -72,8 +87,8 @@ code {
   align-items: center;
   gap: 16px;
   height: 44px;
-  padding: 0 12px 0 14px;
-  background: var(--graphite-850);
+  padding: 0 10px 0 14px;
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
   /* The strip is a drag handle, which is what a frameless-feeling app needs. */
   -webkit-app-region: drag;
@@ -85,20 +100,31 @@ code {
 
 .status-id {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
 
 .wordmark {
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
-  color: var(--paper);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
+.mark {
+  flex: none;
+}
+
+/* A rule between the app's name and the file's, rather than a character. */
 .status-name {
   min-width: 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-bright);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -107,63 +133,87 @@ code {
 }
 
 .status-pos {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--muted);
   flex: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
 }
 
 .status-meta {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   margin-left: auto;
   min-width: 0;
 }
 
+/*
+ * Separate facts, separated by the layout rather than by dots between them.
+ *
+ * A block, not a flex row. text-overflow only works on a block's inline
+ * content, and as a flex row the strip clipped the last fact mid-letter when
+ * room ran out - "EAC" for EAC3, "1920x10" - which reads as a real value. An
+ * ellipsis says plainly that it was cut. (It is a flex item of .status-meta,
+ * which makes it a block whatever its tag.)
+ */
 .status-tech {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  color: var(--muted);
-  white-space: nowrap;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
 }
 
+.status-tech span + span {
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-bright);
+}
+
+/*
+ * Sentence case, and no capsule. The route is the one state this strip exists
+ * to report, so it is said in words at full contrast; the dot beside them is a
+ * second channel for anyone glancing, never the only one.
+ *
+ * The e2e suite reads this text and lower-cases it before comparing, so the
+ * uppercase transform this used to carry can go without breaking it.
+ */
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 9px 3px 7px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 11px;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--muted);
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--ink);
   white-space: nowrap;
 }
 
 .chip-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: currentColor;
 }
 
-.chip-direct {
-  color: var(--direct);
-  border-color: color-mix(in srgb, var(--direct) 35%, transparent);
+.chip-direct .chip-dot {
+  background: var(--direct);
 }
 
-.chip-transcode {
-  color: var(--amber);
-  border-color: color-mix(in srgb, var(--amber) 35%, transparent);
+.chip-transcode .chip-dot {
+  background: var(--transcode);
 }
 
 .chip-busy {
-  color: var(--paper);
+  color: var(--muted);
+}
+
+/* A fact about the file, not a state of the app: quieter than the route. */
+.chip-quiet {
+  padding: 2px 8px;
+  border: 1px solid var(--line-bright);
+  border-radius: 6px;
+  color: var(--muted);
 }
 
 .status-actions {
@@ -173,62 +223,86 @@ code {
 }
 
 .ghost {
-  padding: 5px 11px;
+  padding: 5px 10px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 6px;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .ghost:hover {
-  background: var(--graphite-800);
-  color: var(--paper);
+  background: var(--raised);
+  color: var(--ink);
 }
 
+/* Pressed shows an outline as well as a fill, so it is not mistaken for hover. */
 .ghost[aria-pressed='true'] {
-  background: var(--graphite-700);
-  border-color: var(--line);
-  color: var(--amber);
+  background: var(--raised);
+  border-color: var(--control);
+  color: var(--ink);
 }
 
-.primary {
-  padding: 9px 18px;
-  background: var(--amber);
-  border: none;
+.primary,
+.secondary {
+  padding: 8px 16px;
   border-radius: 8px;
-  color: #1a1206;
-  font-weight: 600;
   font-size: 13.5px;
 }
 
+.primary {
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  color: var(--ground);
+  font-weight: 600;
+}
+
 .primary:hover {
-  background: #ffc047;
+  background: #ffffff;
+  border-color: #ffffff;
+}
+
+.secondary {
+  background: transparent;
+  border: 1px solid var(--control);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.secondary:hover {
+  background: var(--raised);
 }
 
 .primary:disabled,
+.secondary:disabled,
 .ghost:disabled,
 .link:disabled {
   opacity: 0.45;
   cursor: default;
 }
 
+/*
+ * The underline stays in the text's own colour. In "Want every video file to
+ * open here? Open default apps settings" the link is the same grey as the
+ * sentence around it, so the underline is the only thing marking it as a link;
+ * set as a faint hairline it measured 1.6:1 and the link read as plain text.
+ */
 .link {
   padding: 2px 4px;
   background: none;
   border: none;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 12.5px;
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 
 .link:hover:not(:disabled) {
-  color: var(--paper);
+  color: var(--ink);
 }
 
 :where(button):focus-visible {
-  outline: 2px solid var(--amber);
+  outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
 
@@ -283,18 +357,18 @@ code {
   align-items: center;
   gap: 10px;
   max-width: 70%;
-  padding: 9px 10px 9px 14px;
-  border-radius: 8px;
-  background: rgba(18, 19, 22, 0.94);
+  padding: 9px 8px 9px 14px;
+  border-radius: 10px;
+  background: rgba(27, 27, 30, 0.95);
   border: 1px solid var(--line-bright);
-  color: var(--paper);
+  color: var(--ink);
   font-size: 13px;
 }
 
 .banner-bad {
-  background: rgba(20, 8, 8, 0.94);
-  border-color: color-mix(in srgb, var(--signal) 45%, transparent);
-  color: #ffd9da;
+  background: rgba(36, 19, 20, 0.96);
+  border-color: color-mix(in srgb, var(--bad) 40%, transparent);
+  color: #ffd0d0;
 }
 
 .banner-close {
@@ -318,12 +392,12 @@ code {
 
 /*
  * Fills the stage rather than sitting in the middle of it. A centred box on a
- * black stage leaves two seams where one near-black meets another, which reads
+ * black stage leaves two seams where one dark tone meets another, which reads
  * as a rendering fault rather than as a layout.
  */
 .empty {
   display: grid;
-  grid-template-columns: minmax(0, 700px);
+  grid-template-columns: minmax(0, 640px);
   justify-content: center;
   align-content: center;
   justify-items: start;
@@ -331,43 +405,44 @@ code {
   width: 100%;
   height: 100%;
   padding: 48px 32px;
-  background: var(--graphite-900);
+  background: var(--ground);
   overflow-y: auto;
 }
 
 .empty-main h1 {
-  margin: 0 0 10px;
-  font-size: 34px;
-  line-height: 1.15;
-  letter-spacing: -0.025em;
-  font-weight: 700;
+  margin: 0 0 8px;
+  font-size: 28px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-weight: 600;
 }
 
 .empty-sub {
   margin: 0 0 24px;
   max-width: 52ch;
   color: var(--muted);
-  font-size: 14.5px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
 .empty-actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 
 .empty-default {
-  margin: 16px 0 0;
+  margin: 18px 0 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .empty-problem {
   margin: 18px 0 0;
-  padding: 9px 13px;
-  border-left: 2px solid var(--signal);
-  background: rgba(229, 72, 77, 0.08);
-  color: #ffc9cb;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+  border-radius: 8px;
+  background: rgba(255, 138, 138, 0.06);
+  color: #ffd0d0;
   font-size: 13px;
 }
 
@@ -380,16 +455,15 @@ code {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
+/* Sentence case, set small and in the secondary colour rather than capitalised. */
 .empty-recent h2,
 .queue-head h2 {
   margin: 0;
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -405,7 +479,7 @@ code {
   align-items: baseline;
   gap: 14px;
   width: 100%;
-  padding: 9px 6px;
+  padding: 9px 8px;
   background: none;
   border: none;
   border-bottom: 1px solid var(--line);
@@ -413,7 +487,7 @@ code {
 }
 
 .empty-recent li button:hover {
-  background: var(--graphite-850);
+  background: var(--surface);
 }
 
 .recent-name {
@@ -427,8 +501,8 @@ code {
 
 .recent-when {
   flex: none;
-  font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
 
@@ -441,7 +515,7 @@ code {
 }
 
 .diag-bad {
-  color: #ffc9cb;
+  color: #ffd0d0;
 }
 
 /* -------------------------------------------------------------------- queue */
@@ -451,7 +525,7 @@ code {
   width: 288px;
   display: flex;
   flex-direction: column;
-  background: var(--graphite-850);
+  background: var(--surface);
   border-left: 1px solid var(--line);
   overflow: hidden;
 }
@@ -460,12 +534,12 @@ code {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding: 14px 14px 10px;
+  padding: 14px 14px 8px;
 }
 
 .queue-head-actions {
   display: flex;
-  gap: 6px;
+  gap: 4px;
 }
 
 .queue-empty {
@@ -479,7 +553,7 @@ code {
 .queue-list {
   flex: 1;
   margin: 0;
-  padding: 0 0 12px;
+  padding: 0 6px 12px;
   list-style: none;
   overflow-y: auto;
 }
@@ -488,29 +562,43 @@ code {
   display: flex;
   gap: 10px;
   width: 100%;
-  padding: 8px 14px;
+  padding: 7px 8px;
   background: none;
   border: none;
-  border-left: 2px solid transparent;
+  border-radius: 6px;
   text-align: left;
   color: var(--muted);
 }
 
 .queue-list li button:hover {
-  background: var(--graphite-800);
-  color: var(--paper);
+  background: var(--raised);
+  color: var(--ink);
 }
 
+/* The playing row: a light edge as well as the fill, so it is not mistaken for
+   the row under the pointer. */
 .queue-list li[aria-current='true'] button {
-  border-left-color: var(--amber);
-  color: var(--paper);
-  background: var(--graphite-800);
+  background: var(--raised);
+  box-shadow: inset 2px 0 0 var(--ink);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/*
+ * Forced colours - Windows' contrast themes - drop box-shadow and replace
+ * backgrounds with the system colour, which took both of the playing row's
+ * marks away and left it looking like every other row. A border survives.
+ */
+@media (forced-colors: active) {
+  .queue-list li[aria-current='true'] button {
+    border-left: 3px solid Highlight;
+  }
 }
 
 .queue-num {
   flex: none;
-  font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
   padding-top: 1px;
   color: var(--muted);
 }
@@ -541,10 +629,11 @@ code {
 .queue-list li[data-drop]::after {
   content: '';
   position: absolute;
-  left: 10px;
-  right: 10px;
+  left: 8px;
+  right: 8px;
   height: 2px;
-  background: var(--amber);
+  border-radius: 1px;
+  background: var(--ink);
   pointer-events: none;
 }
 
@@ -561,7 +650,7 @@ code {
   padding: 10px 14px 14px;
   border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -572,20 +661,20 @@ code {
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(11, 11, 13, 0.72);
-  backdrop-filter: blur(2px);
+  background: rgba(20, 20, 22, 0.78);
+  backdrop-filter: blur(3px);
   pointer-events: none;
   z-index: 50;
 }
 
 .veil-card {
-  padding: 20px 34px;
-  border: 1px dashed color-mix(in srgb, var(--amber) 60%, transparent);
+  padding: 18px 28px;
+  border: 1px solid var(--line-bright);
   border-radius: 12px;
-  background: var(--graphite-850);
-  color: var(--amber);
+  background: var(--surface);
+  color: var(--ink);
   font-size: 15px;
-  letter-spacing: 0.01em;
+  font-weight: 500;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -593,12 +682,6 @@ code {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-/* A fact about the file, not a state of the app: quieter than the route chip. */
-.chip-quiet {
-  border-color: var(--line-bright);
-  color: var(--muted);
 }
 
 /*

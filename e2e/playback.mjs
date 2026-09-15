@@ -193,7 +193,7 @@ for (const testCase of CASES) {
     continue
   }
 
-  // The chip is uppercased in CSS, and innerText reports what is rendered.
+  // Compared lower-cased, so the chip is free to change case in CSS.
   const route = (await page.locator('.status-meta .chip').last().innerText()).trim().toLowerCase()
   check(
     `${testCase.file}: routed as "${testCase.route}"`,

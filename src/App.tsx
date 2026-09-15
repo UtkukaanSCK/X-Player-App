@@ -284,9 +284,10 @@ export function App() {
               apiRef={apiRef}
               title={media.name}
               storageKey={media.path}
-              // The library default is a cool blue. Here it made the seek bar
-              // and the focus ring the only two things on screen that were not
-              // the app's colour.
+              // The brand amber, kept for the player alone. The library default is a
+              // cool blue; here the case around the picture is graphite with no accent
+              // of its own, so the seek bar and the player’s focus ring carry the one
+              // colour the product has, drawn over the footage.
               accent="#ffb020"
               autoPlay
               onReady={onReady}

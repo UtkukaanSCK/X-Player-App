@@ -22,7 +22,10 @@ export function StatusBar({ media, busy, position, queueOpen, onTop, onToggleQue
   return (
     <header className="status">
       <div className="status-id">
-        <span className="wordmark">X&#8202;Player</span>
+        <span className="wordmark">
+          <Mark />
+          X-Player
+        </span>
         {media && <span className="status-name" title={media.path}>{media.name}</span>}
         {position && (
           <span className="status-pos">
@@ -43,7 +46,9 @@ export function StatusBar({ media, busy, position, queueOpen, onTop, onToggleQue
           <span className="status-tech">
             {[media.videoCodec.toUpperCase(), media.resolution, media.audioCodec.toUpperCase()]
               .filter(Boolean)
-              .join('  ·  ')}
+              .map((fact, index) => (
+                <span key={index}>{fact}</span>
+              ))}
           </span>
         )}
         {/*
@@ -82,5 +87,20 @@ export function StatusBar({ media, busy, position, queueOpen, onTop, onToggleQue
         </button>
       </div>
     </header>
+  )
+}
+
+/**
+ * The app icon at strip size: the amber cross from build/icon.png.
+ *
+ * The square behind it is a step lighter than the strip rather than the icon's
+ * own near-black, which on a dark strip would vanish and leave a floating cross.
+ */
+function Mark() {
+  return (
+    <svg className="mark" width="18" height="18" viewBox="0 0 22 22" aria-hidden focusable="false">
+      <rect width="22" height="22" rx="5.5" fill="#2c2c31" />
+      <path d="M7.5 7.5l7 7M14.5 7.5l-7 7" stroke="#ffb020" strokeWidth="2.6" strokeLinecap="round" />
+    </svg>
   )
 }

@@ -44,7 +44,7 @@ export function EmptyState({
           <button type="button" className="primary" onClick={onOpenFiles} disabled={busy}>
             Open a file
           </button>
-          <button type="button" className="ghost" onClick={onOpenFolder} disabled={busy}>
+          <button type="button" className="secondary" onClick={onOpenFolder} disabled={busy}>
             Open a folder
           </button>
         </div>
