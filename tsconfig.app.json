@@ -17,9 +17,19 @@
     "skipLibCheck": true,
     "noEmit": true,
     "types": [],
+    // One React for the type checker too, as vite.config.ts dedupes it for the
+    // bundle. x-player is checked from the sibling source, whose imports would
+    // otherwise find the sibling's own @types/react - identical, but a second
+    // copy, and TypeScript treats every type in it as unrelated to this one.
     "paths": {
       "x-player": [
         "../src/index.ts"
+      ],
+      "react": [
+        "./node_modules/@types/react"
+      ],
+      "react/*": [
+        "./node_modules/@types/react/*"
       ]
     }
   },
