@@ -98,6 +98,28 @@ code {
   -webkit-app-region: no-drag;
 }
 
+/*
+ * A drag region swallows the press that would otherwise close an open menu, so
+ * while one is open the strip is an ordinary surface: clicking beside the menu
+ * dismisses it, the way it looks like it should.
+ */
+.menu-open .status {
+  -webkit-app-region: no-drag;
+}
+
+/* Said to a screen reader, shown to no one. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .status-id {
   display: flex;
   align-items: center;
@@ -137,6 +159,153 @@ code {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
+}
+
+/*
+ * Export: a menu button beside the file's name.
+ *
+ * The menu hangs below the strip, over the picture, so it is its own no-drag
+ * region: the strip is a drag handle, and only its buttons are exempt.
+ */
+.export {
+  position: relative;
+  flex: none;
+}
+
+.export-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.export-button[aria-expanded='true'] {
+  background: var(--raised);
+  border-color: var(--control);
+  color: var(--ink);
+}
+
+.export-chevron {
+  opacity: 0.7;
+}
+
+.export-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  display: grid;
+  gap: 2px;
+  min-width: 290px;
+  padding: 6px;
+  background: rgba(27, 27, 30, 0.97);
+  border: 1px solid var(--line-bright);
+  border-radius: 10px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+  -webkit-app-region: no-drag;
+}
+
+.export-item,
+.export-status {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.export-item {
+  cursor: pointer;
+}
+
+/*
+ * :focus, not :focus-visible. A menu opened with the mouse still moves focus
+ * from row to row with the arrow keys, and Chromium calls that focus unseen:
+ * the row that Enter would choose would have nothing on it to say so.
+ */
+.export-item:hover:not([aria-disabled='true']),
+.export-item:focus {
+  background: var(--raised);
+}
+
+.export-item:focus,
+.export-menu:focus {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.export-item[aria-disabled='true'] {
+  color: var(--muted);
+  cursor: default;
+}
+
+.export-format {
+  font-weight: 600;
+}
+
+.export-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.export-status {
+  grid-template-columns: 1fr auto;
+  color: var(--muted);
+}
+
+.export-status-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.export-status-percent {
+  font-variant-numeric: tabular-nums;
+}
+
+.export-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  overflow: hidden;
+  background: var(--line-bright);
+  border-radius: 2px;
+}
+
+.export-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transform-origin: left;
+  transition: transform 0.25s linear;
+}
+
+.export-cancel {
+  grid-template-columns: 1fr;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .export-bar > span {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .export-menu {
+    border-color: CanvasText;
+  }
+
+  .export-bar > span {
+    background: Highlight;
+  }
 }
 
 .status-meta {

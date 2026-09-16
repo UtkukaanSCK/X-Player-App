@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { OpenedMedia } from '../../shared/api'
 
 interface Props {
@@ -9,6 +10,8 @@ interface Props {
   onToggleQueue: () => void
   onToggleOnTop: () => void
   onOpen: () => void
+  /** The Export control, beside the name of the file it would export. */
+  exportControl?: ReactNode
 }
 
 /**
@@ -18,7 +21,17 @@ interface Props {
  * being asked. Most players hide that; when the fan spins up you are left
  * guessing whether something is wrong.
  */
-export function StatusBar({ media, busy, position, queueOpen, onTop, onToggleQueue, onToggleOnTop, onOpen }: Props) {
+export function StatusBar({
+  media,
+  busy,
+  position,
+  queueOpen,
+  onTop,
+  onToggleQueue,
+  onToggleOnTop,
+  onOpen,
+  exportControl,
+}: Props) {
   return (
     <header className="status">
       <div className="status-id">
@@ -32,6 +45,7 @@ export function StatusBar({ media, busy, position, queueOpen, onTop, onToggleQue
             {position.index + 1}/{position.total}
           </span>
         )}
+        {exportControl}
       </div>
 
       <div className="status-meta">

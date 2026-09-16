@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { XPlayer } from 'x-player'
 import type { XPlayerApi } from 'x-player'
 import 'x-player/style.css'
-import type { Diagnostics, OpenedMedia, Preferences, RecentEntry } from '../shared/api'
+import type { Diagnostics, ExportProgress, OpenedMedia, Preferences, RecentEntry } from '../shared/api'
 import { DropVeil } from './ui/DropVeil'
 import { EmptyState } from './ui/EmptyState'
+import { ExportMenu } from './ui/ExportMenu'
 import { Queue } from './ui/Queue'
 import { StatusBar } from './ui/StatusBar'
 import { useDroppedFiles } from './useDroppedFiles'
+import { useExport } from './useExport'
 import { useWindowPlaybackKeys } from './useWindowPlaybackKeys'
 
 export function App() {
@@ -18,6 +20,11 @@ export function App() {
   const [problem, setProblem] = useState<string | null>(null)
   /** Something worth saying that is not a failure. */
   const [notice, setNotice] = useState<string | null>(null)
+  /**
+   * A button offered with a notice. It belongs to the exact text it came with,
+   * so a later notice never inherits an action meant for an earlier one.
+   */
+  const [noticeAction, setNoticeAction] = useState<{ for: string; label: string; run: () => void } | null>(null)
   const [recent, setRecent] = useState<RecentEntry[]>([])
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null)
   const [queueOpen, setQueueOpen] = useState(false)
@@ -256,6 +263,36 @@ export function App() {
     void window.desktop.setAlwaysOnTop(!onTop).then(setOnTop)
   }, [onTop])
 
+  /* ------------------------------------------------------------------ export */
+
+  const exporting = useExport(media, {
+    onEnded: (progress: ExportProgress) => {
+      if (progress.state === 'done') {
+        const text = `Saved ${progress.outputName} next to the original.`
+        setProblem(null)
+        setNotice(text)
+        setNoticeAction({
+          for: text,
+          label: 'Show in folder',
+          run: () =>
+            void window.desktop.revealExport(progress.jobId).then((shown) => {
+              // Moved, renamed or deleted since. A button that does nothing at
+              // all is worse than one that says why.
+              if (!shown) {
+                setNotice(null)
+                setProblem(`${progress.outputName} is no longer where it was saved.`)
+              }
+            }),
+        })
+      } else if (progress.state === 'failed') {
+        setNotice(null)
+        setProblem(`${progress.outputName} could not be exported: ${progress.message ?? 'ffmpeg stopped'}`)
+      }
+      // A cancel is the person's own doing, and saying so would only be noise.
+    },
+    onRefused: (message) => setProblem(`The export did not start: ${message}`),
+  })
+
   const hasNext = index < queue.length - 1
 
   return (
@@ -269,6 +306,9 @@ export function App() {
         onToggleQueue={() => setQueueOpen((v) => !v)}
         onToggleOnTop={toggleOnTop}
         onOpen={openFiles}
+        exportControl={
+          media || exporting.running ? <ExportMenu controls={exporting} canExport={media !== null} /> : null
+        }
       />
 
       <div className="body">
@@ -311,9 +351,30 @@ export function App() {
               onClearRecent={() => void window.desktop.clearRecent().then(refreshRecent)}
             />
           )}
+          {/*
+            * The polite region is here from the first render and empty, because
+            * a live region that arrives with its text already inside it is the
+            * one a screen reader is most likely to miss. The banner below is
+            * what this looks like; this is what it says.
+            */}
+          <div className="visually-hidden" role="status">
+            {media && !problem ? (notice ?? '') : ''}
+          </div>
           {media && (problem ?? notice) && (
-            <div className={problem ? 'banner banner-bad' : 'banner'} role={problem ? 'alert' : 'status'}>
+            <div
+              key={problem ? 'problem' : 'notice'}
+              className={problem ? 'banner banner-bad' : 'banner'}
+              // A problem gets a fresh node with role=alert, which is announced
+              // on arrival. A notice is left to the region above it, so it is
+              // not read out twice.
+              role={problem ? 'alert' : undefined}
+            >
               <span>{problem ?? notice}</span>
+              {!problem && noticeAction && noticeAction.for === notice && (
+                <button type="button" className="link" onClick={noticeAction.run}>
+                  {noticeAction.label}
+                </button>
+              )}
               <button
                 type="button"
                 className="banner-close"
