@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { DesktopApi } from '../shared/api'
+import type { DesktopApi, ExportProgress } from '../shared/api'
 
 /**
  * The entire surface the window is allowed to reach.
@@ -7,7 +7,9 @@ import type { DesktopApi } from '../shared/api'
  * Nothing here takes a file path from the page and hands it to the filesystem
  * without the user having chosen it first: `open` goes through the gateway,
  * which only serves what it was asked to open, and `pathForFile` resolves a
- * file the user physically dropped on the window.
+ * file the user physically dropped on the window. Exporting takes the id of a
+ * file that is already open; where the export is written is decided on the
+ * Electron side, beside that file, and never named by the page.
  */
 const api: DesktopApi = {
   pick: () => ipcRenderer.invoke('desktop:pick'),
@@ -25,6 +27,15 @@ const api: DesktopApi = {
   preferences: () => ipcRenderer.invoke('desktop:preferences'),
   savePreferences: (next) => ipcRenderer.invoke('desktop:save-preferences', next),
   openDefaultAppsSettings: () => ipcRenderer.invoke('desktop:default-apps'),
+  exportOptions: (id, audioOrder) => ipcRenderer.invoke('desktop:export-options', id, audioOrder),
+  startExport: (id, format, audioOrder) => ipcRenderer.invoke('desktop:export-start', id, format, audioOrder),
+  cancelExport: (jobId) => ipcRenderer.invoke('desktop:export-cancel', jobId),
+  revealExport: (jobId) => ipcRenderer.invoke('desktop:export-reveal', jobId),
+  onExportProgress: (handler) => {
+    const listener = (_event: unknown, progress: ExportProgress) => handler(progress)
+    ipcRenderer.on('desktop:export-progress', listener)
+    return () => ipcRenderer.removeListener('desktop:export-progress', listener)
+  },
   onOpenPaths: (handler) => {
     const listener = (_event: unknown, paths: string[]) => handler(paths)
     ipcRenderer.on('desktop:open-paths', listener)

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { extname, join, resolve } from 'node:path'
+import { cancelRunningExport, registerExportIpc } from './export/ipc'
 import { capabilities, ffmpegAvailable, useCapabilityCache } from './gateway/ffmpeg'
 import { startGateway, type GatewayHandle } from './gateway/server'
 import { sweepStaleTempDirs } from './gateway/session'
@@ -364,6 +365,7 @@ if (!app.requestSingleInstanceLock()) {
     useCapabilityCache(app.getPath('userData'))
     gateway = await startGateway()
     registerIpc()
+    registerExportIpc({ gateway: () => gateway, window: () => window })
     // Measuring what this machine can encode costs a few process launches.
     // Doing it here keeps it off the clock of the first file someone opens, and
     // the answer is written to disk so only the first ever launch pays.
@@ -384,6 +386,9 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('before-quit', () => {
+    // An export still running is stopped, and its half-written file removed,
+    // rather than left beside the original looking like a video.
+    cancelRunningExport()
     void gateway?.close()
     gateway = null
     openFileId = null

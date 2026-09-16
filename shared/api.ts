@@ -64,6 +64,36 @@ export interface Diagnostics {
   platform: 'windows' | 'macos' | 'linux' | 'other'
 }
 
+/** The containers the open file can be exported to. */
+export type ExportFormat = 'mp4' | 'mkv' | 'webm' | 'mov'
+
+/** One row of the Export menu. */
+export interface ExportOption {
+  format: ExportFormat
+  /** "MP4", "WebM". */
+  label: string
+  available: boolean
+  method: 'copy' | 'encode'
+  /** How long it will take, or why it cannot be chosen. */
+  note: string
+}
+
+export type ExportStart = { ok: true; jobId: string; outputName: string } | { ok: false; message: string }
+
+/** Sent while an export runs, and once more when it ends. */
+export interface ExportProgress {
+  jobId: string
+  sourceName: string
+  /** The name it is being written under, beside the original. */
+  outputName: string
+  format: ExportFormat
+  state: 'running' | 'done' | 'failed' | 'cancelled'
+  /** 0 to 1. */
+  fraction: number
+  /** Why it failed. Absent in every other state. */
+  message?: string
+}
+
 export interface RecentEntry {
   path: string
   name: string
@@ -118,6 +148,17 @@ export interface DesktopApi {
    * app can honestly do is take you to the page where you decide.
    */
   openDefaultAppsSettings(): Promise<boolean>
+  /** What the open file, with this audio track, can be exported to. */
+  exportOptions(id: string, audioOrder: number): Promise<ExportOption[]>
+  /**
+   * Exports an open file beside the original. Takes the id of a file already
+   * open, never a path: where it is written is decided on the Electron side.
+   */
+  startExport(id: string, format: ExportFormat, audioOrder: number): Promise<ExportStart>
+  cancelExport(jobId: string): Promise<void>
+  /** Shows a finished export in the file manager. */
+  revealExport(jobId: string): Promise<boolean>
+  onExportProgress(handler: (progress: ExportProgress) => void): () => void
   /** Files handed to the app by the OS, now and on every later invocation. */
   onOpenPaths(handler: (paths: string[]) => void): () => void
 }
