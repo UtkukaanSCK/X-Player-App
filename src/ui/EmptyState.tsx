@@ -37,7 +37,7 @@ export function EmptyState({
         <h1>Drop a video anywhere</h1>
         <p className="empty-sub">
           MKV, AVI, TS, MOV, HEVC, DTS - whatever it is, it starts playing. Nothing is converted in
-          advance and nothing is written next to your file.
+          advance, and nothing is written next to your file unless you export a copy.
         </p>
 
         <div className="empty-actions">

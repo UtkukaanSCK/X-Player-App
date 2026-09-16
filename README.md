@@ -1,7 +1,8 @@
 # X-Player Desktop
 
-Opens any video file and starts playing. No "converting, 37%" screen, no
-codec pack, nothing written next to your file.
+Opens any video file and starts playing. No "converting, 37%" screen before it
+plays, no codec pack, and nothing written next to your file unless you export a
+copy.
 
 This is a separate project from the player library it uses. The library lives in
 the parent folder and is consumed here as `x-player`; during development a Vite
@@ -112,6 +113,27 @@ that reordering deliberately does *not* do:
   window-wide drop listens only for `Files`, so shuffling a queue never dims the
   app as though something were about to be opened.
 
+## Exporting a copy
+
+**Export**, beside the file's name in the strip, saves a copy of the open file
+as MP4, MKV, WebM or MOV. It is written next to the original under the same
+name - `film.mp4` beside `film.mkv` - and numbered `film (1).mp4` rather than
+replacing anything already there.
+
+Whatever the container can hold is copied, not re-encoded, so most exports take
+seconds and lose nothing: H.264 or HEVC into MP4 or MOV, VP9 or AV1 into WebM,
+and anything at all into MKV, which keeps every audio track and subtitle. Only
+what the target cannot hold is re-encoded - the picture to H.264 or VP9, the
+sound to AAC or Opus - and the menu says which before you choose. A format
+that would need an encoder this build of ffmpeg lacks is shown and not offered.
+The audio track exported is the one playing.
+
+While it runs the file is `film.mp4.part`, renamed only when ffmpeg finishes, so
+a cancel, a crash or quitting the app never leaves a half-written video that
+looks complete. One export runs at a time, and it carries on if you open
+another file. An app killed outright - a power cut, or Task Manager - leaves its
+`.part` behind; no player will open it, and deleting it is safe.
+
 ## Security
 
 The gateway is an HTTP server on your machine that can read files, so it is
@@ -125,6 +147,9 @@ built to be uninteresting to anything else:
   127.0.0.1 still gets nothing.
 - The window runs sandboxed with context isolation on and node integration off,
   and reaches the outside world only through the narrow bridge in `preload.ts`.
+- Exporting is the one thing the window can make write to disk, and it cannot
+  say where. It names an open file by id and a format from a fixed list; the
+  destination is worked out on the Electron side, beside that file.
 
 `e2e/security.mjs` asserts every one of these against the running app.
 
@@ -310,4 +335,6 @@ Uninstalling removes both registry entries.
 - Image-based subtitles (PGS, VOBSUB) cannot become WebVTT. They are listed and
   marked, not silently dropped.
 - ASS and SSA subtitles keep their text and lose their styling.
+- Export works on the whole file. Choosing part of it, and exporting to GIF,
+  are not done yet.
 - No library, no metadata fetching, no ISO or DRM support.

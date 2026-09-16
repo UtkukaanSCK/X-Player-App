@@ -134,7 +134,7 @@ linux:
   description: >-
     A video player that opens whatever you give it. MKV, AVI, HEVC, DTS and the
     rest start playing in about a second, without converting anything in advance
-    and without writing files next to yours.
+    and without writing files next to yours unless you export a copy.
 
 deb:
   # ffmpeg travels inside the package, so these are only what Electron itself
