@@ -253,3 +253,40 @@ export async function ffmpegAvailable(): Promise<boolean> {
     return false
   }
 }
+
+/**
+ * The encoder names in `ffmpeg -encoders` output.
+ *
+ * The listing opens with a legend whose lines look like rows (" V..... = Video"),
+ * so only what follows the "------" separator counts, and only lines whose
+ * first column is a set of capability flags.
+ */
+export function parseEncoders(stdout: string): Set<string> {
+  const names = new Set<string>()
+  let listing = false
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!listing) {
+      if (line.trim().startsWith('------')) listing = true
+      continue
+    }
+    const [flags, name] = line.trim().split(/\s+/)
+    if (name && /^[VAS.][F.][S.][X.][B.][D.]$/.test(flags)) names.add(name)
+  }
+  return names
+}
+
+let encoderNames: Promise<Set<string>> | null = null
+
+/**
+ * Every encoder this ffmpeg was built with, asked once per launch.
+ *
+ * Exporting decides from this which formats it can offer, because the builds
+ * shipped for each platform come from different places. Empty when ffmpeg
+ * cannot run at all, which leaves only the formats that copy every stream.
+ */
+export function listEncoders(): Promise<Set<string>> {
+  encoderNames ??= run(FFMPEG, ['-hide_banner', '-encoders'], { maxBuffer: 8 << 20 })
+    .then(({ stdout }) => parseEncoders(stdout))
+    .catch(() => new Set<string>())
+  return encoderNames
+}
