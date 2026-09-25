@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ExportFormat, ExportOption, ExportProgress, OpenedMedia } from '../shared/api'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ExportFormat, ExportOption, ExportProgress, ExportRange, OpenedMedia } from '../shared/api'
 
 export interface ExportControls {
   /** The export under way, whichever file it came from, or null. */
@@ -16,6 +16,8 @@ interface Handlers {
   onEnded: (progress: ExportProgress) => void
   /** An export was refused before it started. */
   onRefused: (message: string) => void
+  /** GIF was chosen with nothing selected: mark a stretch to adjust. */
+  onMarkRange: () => void
 }
 
 /**
@@ -26,7 +28,11 @@ interface Handlers {
  * the file and audio track they were asked for, so a menu opened on the next
  * file never shows the last one's answer.
  */
-export function useExport(media: OpenedMedia | null, handlers: Handlers): ExportControls {
+export function useExport(
+  media: OpenedMedia | null,
+  range: ExportRange | null,
+  handlers: Handlers,
+): ExportControls {
   const [running, setRunning] = useState<ExportProgress | null>(null)
   const [asked, setAsked] = useState<{ key: string; options: ExportOption[] } | null>(null)
   const handlersRef = useRef(handlers)
@@ -37,7 +43,8 @@ export function useExport(media: OpenedMedia | null, handlers: Handlers): Export
 
   const id = media?.id
   const audioOrder = media?.activeAudioTrack ?? -1
-  const key = `${id ?? ''}:${audioOrder}`
+  // The selection is part of the answer too: what a GIF would cost depends on it.
+  const key = `${id ?? ''}:${audioOrder}:${range ? `${range.start}-${range.end}` : ''}`
 
   useEffect(
     () =>
@@ -56,22 +63,40 @@ export function useExport(media: OpenedMedia | null, handlers: Handlers): Export
 
   const loadOptions = useCallback(() => {
     if (!id) return
-    void window.desktop.exportOptions(id, audioOrder).then((options) => setAsked({ key, options }))
-  }, [id, audioOrder, key])
+    void window.desktop.exportOptions(id, audioOrder, range).then((options) => setAsked({ key, options }))
+  }, [id, audioOrder, range, key])
 
   const start = useCallback(
     (format: ExportFormat) => {
       if (!id) return
-      void window.desktop.startExport(id, format, audioOrder).then((result) => {
+      // Choosing GIF with nothing selected is how a selection is made: it marks
+      // a few seconds on the bar to adjust, rather than refusing the row.
+      if (format === 'gif' && !range) {
+        handlersRef.current.onMarkRange()
+        return
+      }
+      void window.desktop.startExport(id, format, audioOrder, range).then((result) => {
         if (!result.ok) handlersRef.current.onRefused(result.message)
       })
     },
-    [id, audioOrder],
+    [id, audioOrder, range],
   )
 
   const cancel = useCallback(() => {
     if (running) void window.desktop.cancelExport(running.jobId)
   }, [running])
 
-  return { running, options: asked?.key === key ? asked.options : null, loadOptions, start, cancel }
+  const answered = asked?.key === key ? asked.options : null
+  const options = useMemo(() => {
+    if (!answered || range) return answered
+    // Electron calls GIF unavailable without a selection, and it is right about
+    // the export. The row still does something, so it is still offered.
+    return answered.map((option) =>
+      option.format === 'gif'
+        ? { ...option, available: true, note: 'Marks three seconds on the bar to adjust' }
+        : option,
+    )
+  }, [answered, range])
+
+  return { running, options, loadOptions, start, cancel }
 }

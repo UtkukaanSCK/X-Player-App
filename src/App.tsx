@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { XPlayer } from 'x-player'
 import type { XPlayerApi } from 'x-player'
 import 'x-player/style.css'
-import type { Diagnostics, ExportProgress, OpenedMedia, Preferences, RecentEntry } from '../shared/api'
+import type { Diagnostics, ExportProgress, ExportRange, OpenedMedia, Preferences, RecentEntry } from '../shared/api'
 import { DropVeil } from './ui/DropVeil'
 import { EmptyState } from './ui/EmptyState'
 import { ExportMenu } from './ui/ExportMenu'
@@ -27,6 +27,12 @@ export function App() {
   const [noticeAction, setNoticeAction] = useState<{ for: string; label: string; run: () => void } | null>(null)
   const [recent, setRecent] = useState<RecentEntry[]>([])
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null)
+  /**
+   * The stretch marked on the seek bar, which only a GIF export uses.
+   *
+   * It belongs to the file it was marked on, so opening another one clears it.
+   */
+  const [range, setRange] = useState<ExportRange | null>(null)
   const [queueOpen, setQueueOpen] = useState(false)
   const [onTop, setOnTop] = useState(false)
 
@@ -87,6 +93,10 @@ export function App() {
         return false
       }
       resumeAtRef.current = 0
+      // A selection was marked on the file that was playing, and means nothing
+      // on the next one. Switching audio track reopens the same file and keeps
+      // its own state, so it is not affected.
+      setRange(null)
       setMedia(result.media)
       refreshRecent()
       return true
@@ -265,7 +275,16 @@ export function App() {
 
   /* ------------------------------------------------------------------ export */
 
-  const exporting = useExport(media, {
+  /** Three seconds from where the viewer is, to drag into shape. */
+  const markRange = useCallback(() => {
+    const video = apiRef.current?.getVideo()
+    const duration = video?.duration
+    if (!video || !Number.isFinite(duration) || !duration) return
+    const start = Math.max(0, Math.min(video.currentTime, duration - 0.2))
+    setRange({ start, end: Math.min(duration, start + 3) })
+  }, [])
+
+  const exporting = useExport(media, range, {
     onEnded: (progress: ExportProgress) => {
       if (progress.state === 'done') {
         const text = `Saved ${progress.outputName} next to the original.`
@@ -291,6 +310,7 @@ export function App() {
       // A cancel is the person's own doing, and saying so would only be noise.
     },
     onRefused: (message) => setProblem(`The export did not start: ${message}`),
+    onMarkRange: markRange,
   })
 
   const hasNext = index < queue.length - 1
@@ -307,7 +327,13 @@ export function App() {
         onToggleOnTop={toggleOnTop}
         onOpen={openFiles}
         exportControl={
-          media || exporting.running ? <ExportMenu controls={exporting} canExport={media !== null} /> : null
+          media || exporting.running ? (
+            <ExportMenu
+              controls={exporting}
+              canExport={media !== null}
+              onClearRange={range ? () => setRange(null) : undefined}
+            />
+          ) : null
         }
       />
 
@@ -321,6 +347,8 @@ export function App() {
               audioTracks={media.audioTracks}
               activeAudioTrack={media.activeAudioTrack}
               onAudioTrack={(order) => void changeAudio(order)}
+              range={range}
+              onRangeChange={setRange}
               apiRef={apiRef}
               title={media.name}
               storageKey={media.path}

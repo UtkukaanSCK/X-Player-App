@@ -6,6 +6,8 @@ interface Props {
   controls: ExportControls
   /** False when nothing is open. A running export can still be watched and cancelled. */
   canExport: boolean
+  /** Given only while a stretch is marked on the seek bar. */
+  onClearRange?: () => void
 }
 
 /**
@@ -19,7 +21,7 @@ interface Props {
  * window, which otherwise sends arrows, space and letters to the player - so
  * moving through the menu never seeks or pauses the video behind it.
  */
-export function ExportMenu({ controls, canExport }: Props) {
+export function ExportMenu({ controls, canExport, onClearRange }: Props) {
   const { running, options, loadOptions, start, cancel } = controls
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -204,20 +206,37 @@ export function ExportMenu({ controls, canExport }: Props) {
               </button>
             </>
           ) : options && options.length > 0 ? (
-            options.map((option) => (
-              <button
-                key={option.format}
-                type="button"
-                className="export-item"
-                role="menuitem"
-                tabIndex={-1}
-                aria-disabled={!option.available}
-                onClick={() => choose(option)}
-              >
-                <span className="export-format">{option.label}</span>
-                <span className="export-note">{option.note}</span>
-              </button>
-            ))
+            <>
+              {options.map((option) => (
+                <button
+                  key={option.format}
+                  type="button"
+                  className="export-item"
+                  role="menuitem"
+                  tabIndex={-1}
+                  aria-disabled={!option.available}
+                  onClick={() => choose(option)}
+                >
+                  <span className="export-format">{option.label}</span>
+                  <span className="export-note">{option.note}</span>
+                </button>
+              ))}
+              {onClearRange && (
+                <button
+                  type="button"
+                  className="export-item"
+                  role="menuitem"
+                  tabIndex={-1}
+                  onClick={() => {
+                    onClearRange()
+                    close(true)
+                  }}
+                >
+                  <span className="export-format">Clear</span>
+                  <span className="export-note">Takes the marked stretch off the bar</span>
+                </button>
+              )}
+            </>
           ) : (
             <div className="export-status" role="group">
               {options ? 'There is nothing to export' : 'Checking what this file can become…'}
