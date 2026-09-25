@@ -158,6 +158,33 @@ try {
   await finished(page, 20_000)
   check('cancelling leaves neither the export nor a partial file', !existsSync(join(work, 'hd720.webm')) && !readdirSync(work).some((f) => f.startsWith('hd720') && f !== 'hd720.mkv'), readdirSync(work).join(', '))
 
+  /* ------------------------------------------------------------------ GIF */
+
+  // hd720.mkv is what the cancel left open, and delivering a file already in
+  // the queue is refused - rightly, and not what this section is about.
+  // Nothing is marked yet, so the GIF row is the one that marks something.
+  await exportButton(page).click()
+  await exportMenu(page).getByRole('menuitem', { name: /^GIF/ }).click()
+  const marks = page.locator('.xp-range-handle')
+  check('choosing GIF with nothing marked puts handles on the seek bar', (await marks.count()) === 2)
+
+  const marked = await page.evaluate(() =>
+    [...document.querySelectorAll('.xp-range-handle')].map((h) => Number(h.getAttribute('aria-valuenow'))),
+  )
+  await exportTo(page, 'GIF')
+  const gifBanner = await finished(page, 120_000)
+  const gif = join(work, 'hd720.gif')
+  check('a GIF export lands next to the original', existsSync(gif), gifBanner || readdirSync(work).join(', '))
+  if (existsSync(gif)) {
+    const made = probe(gif)
+    const wanted = marked[1] - marked[0]
+    check(
+      'and it is a GIF of the stretch that was marked',
+      made.codecs.join() === 'gif' && Math.abs(made.duration - wanted) < 0.6,
+      `${made.codecs} ${made.duration}s for a ${wanted}s mark`,
+    )
+  }
+
   /* ------------------------------------------------------------ the bridge */
 
   const refused = await page.evaluate(async (path) => {
