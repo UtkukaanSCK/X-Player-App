@@ -116,7 +116,7 @@ that reordering deliberately does *not* do:
 ## Exporting a copy
 
 **Export**, beside the file's name in the strip, saves a copy of the open file
-as MP4, MKV, WebM or MOV. It is written next to the original under the same
+as MP4, MKV, WebM, MOV or GIF. It is written next to the original under the same
 name - `film.mp4` beside `film.mkv` - and numbered `film (1).mp4` rather than
 replacing anything already there.
 
@@ -127,6 +127,14 @@ what the target cannot hold is re-encoded - the picture to H.264 or VP9, the
 sound to AAC or Opus - and the menu says which before you choose. A format
 that would need an encoder this build of ffmpeg lacks is shown and not offered.
 The audio track exported is the one playing.
+
+A GIF is made of a marked stretch rather than of the film. Choosing **GIF**
+with nothing marked puts a handle at each end of three seconds on the seek bar:
+drag them, or move them with the arrow keys, and choose GIF again to write it.
+It comes out at 15 frames a second and 480 pixels wide, with a palette built
+from the frames you chose - ffmpeg's own would smear them - and it loops. The
+menu row says how long the cut is before you commit to it, and **Clear** takes
+the marks off the bar.
 
 While it runs the file is `film.mp4.part`, renamed only when ffmpeg finishes, so
 a cancel, a crash or quitting the app never leaves a half-written video that
@@ -335,6 +343,6 @@ Uninstalling removes both registry entries.
 - Image-based subtitles (PGS, VOBSUB) cannot become WebVTT. They are listed and
   marked, not silently dropped.
 - ASS and SSA subtitles keep their text and lose their styling.
-- Export works on the whole file. Choosing part of it, and exporting to GIF,
-  are not done yet.
+- A marked stretch is used by the GIF export only. Cutting part of a film into
+  an MP4 or a WebM is not done yet.
 - No library, no metadata fetching, no ISO or DRM support.
