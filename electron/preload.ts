@@ -27,8 +27,9 @@ const api: DesktopApi = {
   preferences: () => ipcRenderer.invoke('desktop:preferences'),
   savePreferences: (next) => ipcRenderer.invoke('desktop:save-preferences', next),
   openDefaultAppsSettings: () => ipcRenderer.invoke('desktop:default-apps'),
-  exportOptions: (id, audioOrder) => ipcRenderer.invoke('desktop:export-options', id, audioOrder),
-  startExport: (id, format, audioOrder) => ipcRenderer.invoke('desktop:export-start', id, format, audioOrder),
+  exportOptions: (id, audioOrder, range) => ipcRenderer.invoke('desktop:export-options', id, audioOrder, range),
+  startExport: (id, format, audioOrder, range) =>
+    ipcRenderer.invoke('desktop:export-start', id, format, audioOrder, range),
   cancelExport: (jobId) => ipcRenderer.invoke('desktop:export-cancel', jobId),
   revealExport: (jobId) => ipcRenderer.invoke('desktop:export-reveal', jobId),
   onExportProgress: (handler) => {

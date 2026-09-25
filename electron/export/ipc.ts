@@ -1,13 +1,13 @@
 import { ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { existsSync, rmSync, statSync } from 'node:fs'
 import { basename, isAbsolute } from 'node:path'
-import type { ExportFormat, ExportOption, ExportProgress, ExportStart } from '../../shared/api'
+import type { ExportFormat, ExportOption, ExportProgress, ExportRange, ExportStart } from '../../shared/api'
 import { listEncoders } from '../gateway/ffmpeg'
 import type { GatewayHandle, OpenFile } from '../gateway/server'
 import { startExport, type ExportJob } from './job'
 import { LABEL, planExport } from './rules'
 
-const FORMATS: ExportFormat[] = ['mp4', 'mkv', 'webm', 'mov']
+const FORMATS: ExportFormat[] = ['mp4', 'mkv', 'webm', 'mov', 'gif']
 
 /** A reading every quarter of a second is smooth, and more is IPC for nothing. */
 const PROGRESS_EVERY_MS = 250
@@ -61,33 +61,56 @@ export function registerExportIpc(deps: Deps) {
     return order >= -1 && order < Math.max(1, file.info.audio.length) ? file : null
   }
 
+  /**
+   * The stretch the page marked, when it is one this file could be cut from.
+   *
+   * It arrives as whatever the renderer felt like sending, and it ends up in
+   * an ffmpeg -ss, so it is checked here rather than trusted: two finite
+   * seconds, in order, inside the file.
+   */
+  const markedRange = (value: unknown, duration: number): ExportRange | null => {
+    if (!value || typeof value !== 'object') return null
+    const { start, end } = value as Partial<ExportRange>
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null
+    const from = start as number
+    const to = end as number
+    // Half a second of slack: a duration is a rounded number and the last
+    // frame of a file is allowed to be the end of a selection.
+    if (from < 0 || to <= from || to > duration + 0.5) return null
+    return { start: from, end: to }
+  }
+
   const send = (progress: ExportProgress) => {
     const window = deps.window()
     if (window && !window.isDestroyed()) window.webContents.send('desktop:export-progress', progress)
   }
 
-  ipcMain.handle('desktop:export-options', async (event, id: unknown, audioOrder: unknown): Promise<ExportOption[]> => {
-    if (!fromWindow(event)) return []
-    const file = openFile(id, audioOrder)
-    if (!file) return []
-    const encoders = await listEncoders()
-    const busy = running !== null || starting
-    return FORMATS.map((format) => {
-      const plan = planExport(file.info, audioOrder as number, format, encoders)
-      const blocked = plan.available && busy
-      return {
-        format,
-        label: LABEL[format],
-        available: plan.available && !blocked,
-        method: plan.method,
-        note: blocked ? 'Another export is running' : plan.note,
-      }
-    })
-  })
+  ipcMain.handle(
+    'desktop:export-options',
+    async (event, id: unknown, audioOrder: unknown, range: unknown): Promise<ExportOption[]> => {
+      if (!fromWindow(event)) return []
+      const file = openFile(id, audioOrder)
+      if (!file) return []
+      const encoders = await listEncoders()
+      const marked = markedRange(range, file.info.duration)
+      const busy = running !== null || starting
+      return FORMATS.map((format) => {
+        const plan = planExport(file.info, audioOrder as number, format, encoders, marked)
+        const blocked = plan.available && busy
+        return {
+          format,
+          label: LABEL[format],
+          available: plan.available && !blocked,
+          method: plan.method,
+          note: blocked ? 'Another export is running' : plan.note,
+        }
+      })
+    },
+  )
 
   ipcMain.handle(
     'desktop:export-start',
-    async (event, id: unknown, format: unknown, audioOrder: unknown): Promise<ExportStart> => {
+    async (event, id: unknown, format: unknown, audioOrder: unknown, range: unknown): Promise<ExportStart> => {
       if (!fromWindow(event)) return { ok: false, message: 'That request did not come from the player window' }
       if (typeof format !== 'string' || !FORMATS.includes(format as ExportFormat)) {
         return { ok: false, message: 'X-Player does not export to that format' }
@@ -99,7 +122,13 @@ export function registerExportIpc(deps: Deps) {
       starting = true
 
       try {
-        const plan = planExport(file.info, audioOrder as number, format as ExportFormat, await listEncoders())
+        const plan = planExport(
+          file.info,
+          audioOrder as number,
+          format as ExportFormat,
+          await listEncoders(),
+          markedRange(range, file.info.duration),
+        )
         if (!plan.available) return { ok: false, message: plan.note }
 
         // A copy, because opening the next file releases this one's session.
