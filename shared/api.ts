@@ -65,7 +65,18 @@ export interface Diagnostics {
 }
 
 /** The containers the open file can be exported to. */
-export type ExportFormat = 'mp4' | 'mkv' | 'webm' | 'mov'
+export type ExportFormat = 'mp4' | 'mkv' | 'webm' | 'mov' | 'gif'
+
+/**
+ * A stretch of the open file, in seconds, as marked on the seek bar.
+ *
+ * Only the GIF export uses one so far: a GIF of a whole film is not something
+ * anyone wants, and every other format takes the file entire.
+ */
+export interface ExportRange {
+  start: number
+  end: number
+}
 
 /** One row of the Export menu. */
 export interface ExportOption {
@@ -149,12 +160,17 @@ export interface DesktopApi {
    */
   openDefaultAppsSettings(): Promise<boolean>
   /** What the open file, with this audio track, can be exported to. */
-  exportOptions(id: string, audioOrder: number): Promise<ExportOption[]>
+  exportOptions(id: string, audioOrder: number, range?: ExportRange | null): Promise<ExportOption[]>
   /**
    * Exports an open file beside the original. Takes the id of a file already
    * open, never a path: where it is written is decided on the Electron side.
    */
-  startExport(id: string, format: ExportFormat, audioOrder: number): Promise<ExportStart>
+  startExport(
+    id: string,
+    format: ExportFormat,
+    audioOrder: number,
+    range?: ExportRange | null,
+  ): Promise<ExportStart>
   cancelExport(jobId: string): Promise<void>
   /** Shows a finished export in the file manager. */
   revealExport(jobId: string): Promise<boolean>

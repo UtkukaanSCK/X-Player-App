@@ -146,3 +146,29 @@ describe('an export that does not finish', () => {
     expect(fake.started.count).toBe(0)
   })
 })
+
+describe('an export of part of a file', () => {
+  it('gives ffmpeg the input options before the input, where seeking is cheap', async () => {
+    const dir = folder()
+    const plan: ExportPlan = { ...PLAN, inputArgs: ['-ss', '5'] }
+    const job = startExport({ info: info(join(dir, 'film.mkv')), plan, onProgress: () => {} }, encoder('ok').run)
+
+    await job.done
+    const asked = JSON.parse(readFileSync(join(dir, 'film.mp4'), 'utf8')) as string[]
+    expect(asked.indexOf('-ss')).toBeGreaterThan(-1)
+    expect(asked.indexOf('-ss')).toBeLessThan(asked.indexOf('-i'))
+  })
+
+  it('measures progress against the piece being written, not the whole film', async () => {
+    const seen: number[] = []
+    // The fake reports five seconds in. Against a twenty-second cut that is a
+    // quarter done, whatever the file's own ten seconds would say.
+    const plan: ExportPlan = { ...PLAN, duration: 20 }
+    const job = startExport(
+      { info: info(join(folder(), 'film.mkv')), plan, onProgress: (fraction) => seen.push(fraction) },
+      encoder('ok').run,
+    )
+    await job.done
+    expect(seen).toEqual([0.25, 1])
+  })
+})

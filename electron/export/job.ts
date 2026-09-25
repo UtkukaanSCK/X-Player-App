@@ -67,6 +67,7 @@ export function startExport(request: ExportRequest, runEncoder: EncoderRunner = 
   const done = new Promise<ExportOutcome>((resolve) => {
     const args = [
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      ...(plan.inputArgs ?? []),
       '-i', info.path,
       ...plan.args,
       '-progress', 'pipe:1', '-nostats',
@@ -88,7 +89,8 @@ export function startExport(request: ExportRequest, runEncoder: EncoderRunner = 
     proc.stdout?.setEncoding('utf8')
     proc.stdout?.on(
       'data',
-      progressReader(info.duration, (fraction) => {
+      // What is being written, which for a cut is shorter than the film.
+      progressReader(plan.duration ?? info.duration, (fraction) => {
         // What the caller does with a reading is its own business: a throw
         // here would come out of a stream event, which no one catches.
         try {

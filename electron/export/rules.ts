@@ -1,4 +1,4 @@
-import type { ExportFormat } from '../../shared/api'
+import type { ExportFormat, ExportRange } from '../../shared/api'
 import type { MediaInfo } from '../gateway/types'
 
 /** What exporting one file to one format would do, decided before anything runs. */
@@ -11,9 +11,19 @@ export interface ExportPlan {
   note: string
   /** Output options, everything between the input and the output path. */
   args: string[]
+  /**
+   * Options that go before the input.
+   *
+   * -ss is the one that matters: ahead of the input it seeks the demuxer and
+   * starts decoding there, behind it ffmpeg decodes the whole film up to that
+   * point and throws the frames away.
+   */
+  inputArgs?: string[]
+  /** Seconds of video this will write, when that is not the whole file. */
+  duration?: number
 }
 
-export const LABEL: Record<ExportFormat, string> = { mp4: 'MP4', mkv: 'MKV', webm: 'WebM', mov: 'MOV' }
+export const LABEL: Record<ExportFormat, string> = { mp4: 'MP4', mkv: 'MKV', webm: 'WebM', mov: 'MOV', gif: 'GIF' }
 
 /**
  * The muxer for each format, stated outright.
@@ -22,7 +32,7 @@ export const LABEL: Record<ExportFormat, string> = { mp4: 'MP4', mkv: 'MKV', web
  * it is complete, so a half-finished file never carries the real name. ffmpeg
  * picks a container from the output's extension, and .part is not one.
  */
-const MUXER: Record<ExportFormat, string> = { mp4: 'mp4', mkv: 'matroska', webm: 'webm', mov: 'mov' }
+const MUXER: Record<ExportFormat, string> = { mp4: 'mp4', mkv: 'matroska', webm: 'webm', mov: 'mov', gif: 'gif' }
 
 interface Target {
   /** Video codecs this container holds as they are. */
@@ -47,7 +57,7 @@ interface Target {
 const H264 = { encoder: 'libx264', name: 'H.264', args: ['-crf', '20', '-preset', 'medium', '-pix_fmt', 'yuv420p'] }
 const AAC = { encoder: 'aac', name: 'AAC', bitrate: (channels: number) => (channels > 2 ? '384k' : '192k') }
 
-const TARGETS: Record<Exclude<ExportFormat, 'mkv'>, Target> = {
+const TARGETS: Record<Exclude<ExportFormat, 'mkv' | 'gif'>, Target> = {
   mp4: {
     copiesVideo: ['h264', 'hevc', 'av1', 'mpeg4'],
     copiesAudio: ['aac', 'mp3', 'ac3', 'eac3'],
@@ -86,6 +96,7 @@ export function planExport(
   audioOrder: number,
   format: ExportFormat,
   encoders: ReadonlySet<string>,
+  range?: ExportRange | null,
 ): ExportPlan {
   const unavailable = (note: string): ExportPlan => ({ format, available: false, method: 'copy', note, args: [] })
 
@@ -94,6 +105,7 @@ export function planExport(
   // MOV identically, and a person thinks of the file by the name they see.
   if (extensionOf(info.name) === format) return unavailable(`Already ${LABEL[format]}`)
   if (format === 'mkv') return planMatroska(info)
+  if (format === 'gif') return planGif(range, encoders)
 
   const target = TARGETS[format]
   const video = info.video
@@ -159,6 +171,47 @@ function planMatroska(info: MediaInfo): ExportPlan {
   if (info.subtitles.some((s) => s.codec === 'mov_text')) args.push('-c:s', 'srt')
   args.push('-f', MUXER.mkv)
   return { format: 'mkv', available: true, method: 'copy', note: 'Copies every stream, fast', args }
+}
+
+/** Frames a second, and pixels across, for a GIF. */
+const GIF_FPS = 15
+const GIF_WIDTH = 480
+
+/*
+ * One command, two passes.
+ *
+ * A GIF holds 256 colours, so its palette is the whole of how it looks: the
+ * first pass reads the frames that were chosen and builds a palette from them,
+ * the second maps those frames onto it. Letting ffmpeg fall back to its
+ * built-in palette is the difference between a picture and a smear, and doing
+ * the two passes as two commands would write every frame to disk twice.
+ *
+ * Fifteen frames a second at 480 pixels wide, because a GIF at a film's own
+ * size and rate is tens of megabytes that nothing plays smoothly.
+ */
+const GIF_FILTER =
+  `fps=${GIF_FPS},scale=${GIF_WIDTH}:-1:flags=lanczos,` +
+  'split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5'
+
+/** A GIF of the marked stretch, and only of that. */
+function planGif(range: ExportRange | null | undefined, encoders: ReadonlySet<string>): ExportPlan {
+  const no = (note: string): ExportPlan => ({ format: 'gif', available: false, method: 'encode', note, args: [] })
+  if (!range) return no('Select a stretch on the seek bar first')
+  if (!encoders.has('gif')) return no('This ffmpeg cannot write GIFs')
+
+  const duration = Number((range.end - range.start).toFixed(3))
+  if (duration <= 0) return no('That selection has no length')
+
+  return {
+    format: 'gif',
+    available: true,
+    method: 'encode',
+    note: `${duration.toFixed(1)}s at ${GIF_FPS} fps, ${GIF_WIDTH}px wide`,
+    inputArgs: ['-ss', String(range.start)],
+    // -loop 0 means forever, which is what everyone means by a GIF.
+    args: ['-t', String(duration), '-an', '-vf', GIF_FILTER, '-loop', '0', '-f', MUXER.gif],
+    duration,
+  }
 }
 
 function extensionOf(name: string): string {

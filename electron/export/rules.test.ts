@@ -13,7 +13,7 @@ import { planExport } from './rules'
  */
 
 /** Every encoder an export can ask for. */
-const ALL = new Set(['libx264', 'aac', 'libvpx-vp9', 'libopus'])
+const ALL = new Set(['libx264', 'aac', 'libvpx-vp9', 'libopus', 'gif'])
 
 function video(over: Partial<VideoStream> = {}): VideoStream {
   return { index: 0, codec: 'h264', profile: 'High', width: 1920, height: 1080, fps: 24, pixFmt: 'yuv420p', ...over }
@@ -281,5 +281,42 @@ describe('a file playing straight from disk, with no track chosen', () => {
       ],
     })
     expect(valuesOf(planExport(info, -1, 'mp4', ALL).args, '-map')).toEqual(['0:0', '0:a:1'])
+  })
+})
+
+describe('exporting a GIF of the selected stretch', () => {
+  const SELECTED = { start: 12, end: 15 }
+
+  it('cuts only what was selected, and leaves the sound out', () => {
+    const plan = planExport(file('film.mkv'), 0, 'gif', ALL, SELECTED)
+    expect(plan.available).toBe(true)
+    // Before the input, not after it: seeking the demuxer is the difference
+    // between a moment and decoding everything up to that moment.
+    expect(valueOf(plan.inputArgs ?? [], '-ss')).toBe('12')
+    expect(valueOf(plan.args, '-t')).toBe('3')
+    expect(plan.args).toContain('-an')
+    expect(valueOf(plan.args, '-f')).toBe('gif')
+  })
+
+  it('builds its own palette, which is the difference between a GIF and a mess', () => {
+    const filter = valueOf(planExport(file('film.mkv'), 0, 'gif', ALL, SELECTED).args, '-vf') ?? ''
+    expect(filter).toMatch(/palettegen/)
+    expect(filter).toMatch(/paletteuse/)
+    expect(filter).toMatch(/fps=/)
+  })
+
+  it('counts the selection, not the film, as the work to be done', () => {
+    expect(planExport(file('film.mkv'), 0, 'gif', ALL, SELECTED).duration).toBe(3)
+  })
+
+  it('has nothing to cut without a selection', () => {
+    const plan = planExport(file('film.mkv'), 0, 'gif', ALL)
+    expect(plan.available).toBe(false)
+    expect(plan.note).toMatch(/select/i)
+  })
+
+  it('is not offered by an ffmpeg that cannot write one', () => {
+    const plan = planExport(file('film.mkv'), 0, 'gif', new Set(['libx264', 'aac']), SELECTED)
+    expect(plan.available).toBe(false)
   })
 })
