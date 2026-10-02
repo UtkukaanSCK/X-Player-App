@@ -53,8 +53,8 @@ afterEach(() => {
   for (const s of open.splice(0)) s.dispose()
 })
 
-function session() {
-  const s = new Session({ fileId: 'film', audioOrder: 0, maxHeight: 0 }, info, plan)
+function session(media: MediaInfo = info) {
+  const s = new Session({ fileId: 'film', audioOrder: 0, maxHeight: 0 }, media, plan)
   open.push(s)
   return s
 }
@@ -106,5 +106,61 @@ describe('after an encoder run has failed', () => {
     await failARun(s)
 
     await expect(s.segment(3)).rejects.toThrow(ENCODER_FAILURE)
+  })
+})
+
+/**
+ * The same film, five milliseconds longer.
+ *
+ * Forty-and-five-thousandths of a second cut into four-second segments leaves a
+ * final slot 5 ms wide, and at 24 fps a frame lasts 42 ms: there is no frame
+ * left to put in it. ffmpeg opens a segment only where a frame starts, so this
+ * eleventh segment is one the encoder never writes - measured with the staged
+ * binary on hevc10-ac3.mkv (40.005 s) and hd720.mkv (40.021 s), where a run
+ * over the whole file produces ten segments and stops.
+ */
+const shortTail: MediaInfo = { ...info, duration: 40.005 }
+
+function promised(media: MediaInfo): number {
+  const lines = session(media)
+    .playlist((n) => `seg/${n}.ts`)
+    .split('\n')
+  return lines.filter((line) => line.startsWith('seg/')).length
+}
+
+describe('a file whose last segment would hold no frame', () => {
+  it('does not promise one the encoder will never produce', () => {
+    expect(promised(shortTail)).toBe(10)
+  })
+
+  /*
+   * The other direction, and the reason the test above cannot simply drop the
+   * last segment of every file. A 168 ms tail at 24 fps holds four frames, and
+   * the encoder does write that segment: measured with the staged binary on
+   * h264-aac.mkv and multi.mkv, both 40.168 s, where a run over the whole file
+   * produces eleven. A file that divides exactly keeps all of its segments too.
+   */
+  it('still promises one that holds frames', () => {
+    expect(promised({ ...info, duration: 40.168 })).toBe(11)
+    expect(promised(info)).toBe(10)
+  })
+
+  /*
+   * The regression. The playlist promised eleven segments, so hls.js asked for
+   * the eleventh while buffering ahead - and asking for it started a whole
+   * ffmpeg run at -ss 40 on a file that ends at 40.005. That run reads the
+   * input, produces no frame and exits 0: measured against the staged binary it
+   * cost 550-850 ms and left either a zero-byte segment, which was then served
+   * as a 200 that hls.js could not parse, or no file at all, which made the
+   * request fail. Either way hls.js asked again, and every attempt paid for
+   * another run, which is the request left pending in the report.
+   *
+   * Refusing it outright is the only honest answer: no encoder run can produce
+   * a frame that is not in the file. The rejection says "out of range" rather
+   * than anything about the encoder precisely because none was started.
+   */
+  it('refuses it at once instead of running the encoder past the end', async () => {
+    const s = session(shortTail)
+    await expect(s.segment(10)).rejects.toThrow(/out of range/)
   })
 })

@@ -105,7 +105,7 @@ export class Session {
     private readonly plan: RoutePlan,
   ) {
     this.dir = mkdtempSync(join(tmpdir(), TEMP_PREFIX))
-    this.segmentCount = Math.max(1, Math.ceil(info.duration / SEGMENT_SECONDS))
+    this.segmentCount = segmentsIn(info)
   }
 
   /**
@@ -344,6 +344,34 @@ export class Session {
     })
   }
 
+}
+
+/**
+ * How many segments the file really has.
+ *
+ * Dividing the duration by the segment length and rounding up asks for one
+ * segment too many whenever what is left over is shorter than a frame. ffmpeg
+ * opens a segment where a frame starts and nowhere else, so a 40.005 s file at
+ * 24 fps - whose last frame starts at 39.963 - gets ten segments and stops,
+ * while the playlist promised eleven.
+ *
+ * Promising that eleventh one cost real time. hls.js asked for it while
+ * buffering ahead, and asking started a whole ffmpeg run at -ss 40 that could
+ * only read the input, produce no frame and exit 0 - half a second to a second
+ * each time, leaving either a zero-byte segment that was served as a 200 the
+ * player could not parse, or no file at all, which failed the request. Then the
+ * player asked again.
+ *
+ * Dropping it costs at most the last frame of a file, and only where that frame
+ * did not make it into a segment anyway.
+ */
+function segmentsIn(info: MediaInfo): number {
+  const count = Math.max(1, Math.ceil(info.duration / SEGMENT_SECONDS))
+  const tail = info.duration - (count - 1) * SEGMENT_SECONDS
+  const frame = info.video && info.video.fps > 0 ? 1 / info.video.fps : 0
+  // A file one segment long has nothing to drop, and without a frame rate there
+  // is nothing to measure the tail against.
+  return count > 1 && tail < frame ? count - 1 : count
 }
 
 function delay(ms: number) {
