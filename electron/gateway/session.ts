@@ -96,6 +96,26 @@ export class Session {
   private proc: ChildProcess | null = null
   /** First segment number the running process was started for. */
   private runStart = -1
+  /**
+   * True from the moment a run is asked for until its process is gone.
+   *
+   * `proc` cannot answer that question: it is null before the spawn as well as
+   * after the exit, and the gap in front of the spawn is as wide as
+   * capabilities() takes - "a second or so of process launches" on a cold cache,
+   * as ffmpeg.ts puts it. Reading that gap as "the run is over" is measurable
+   * damage: with a 50 ms probe, one segment() call rejects in 1 ms with "the
+   * encoder produced nothing for this position" before any encoder has run, and
+   * two calls in the same tick each start a run for the same position - two
+   * ffmpeg processes writing %d.ts into one directory, the first of them orphaned
+   * by the second's assignment to `proc` and so never killed and never reported.
+   */
+  private running = false
+  /**
+   * Which run is current. A position cannot say: segment(5), segment(40) and
+   * segment(5) again leave two runs asked for the same position, and a check on
+   * `runStart` lets both of them through to spawn.
+   */
+  private runId = 0
   private runFailed: string | null = null
   private disposed = false
 
@@ -146,7 +166,7 @@ export class Session {
       return path
     }
 
-    const inCurrentRun = this.proc !== null && n >= this.runStart && n < this.runStart + RUN_SEGMENTS
+    const inCurrentRun = this.running && n >= this.runStart && n < this.runStart + RUN_SEGMENTS
     if (!inCurrentRun) this.startRun(n)
 
     await this.awaitComplete(n)
@@ -175,10 +195,17 @@ export class Session {
    * the process producing it has exited. Checking the file size is not enough:
    * the muxer writes continuously and a partially written segment plays as a
    * corrupt fragment.
+   *
+   * One thing this cannot clear, and does not try to: the last segment of the
+   * file, complete on disk, after a run failed somewhere else. It has no
+   * successor by definition, so "the muxer moved on" can never be true of it,
+   * and a complete last segment and one the muxer was half way through look
+   * identical from outside - which is what the failed-run branch below is
+   * refusing. The cost is the final four seconds of a film, once, after an
+   * encoder failure the viewer has already been told about; the alternative is
+   * serving a corrupt fragment as the end of every film whose run died there.
    */
   private async awaitComplete(n: number): Promise<void> {
-    const isLastOfRun = this.runStart >= 0 && n === this.runStart + RUN_SEGMENTS - 1
-    const isLastOfFile = n === this.segmentCount - 1
     const deadline = Date.now() + SEGMENT_TIMEOUT_MS
 
     for (;;) {
@@ -197,12 +224,29 @@ export class Session {
       // segment left by a failed run as "all there is" and serve a corrupt fragment.
       if (this.runFailed) throw new Error(this.runFailed)
 
-      const finished = this.proc === null
-      if (finished && (await exists(this.segmentPath(n)))) {
-        // The run ended. Whatever it wrote for this segment is all there is.
-        if (isLastOfRun || isLastOfFile || (await size(this.segmentPath(n))) > 0) return
-      }
-      if (finished && !(await exists(this.segmentPath(n)))) {
+      if (!this.running) {
+        // The run is over, so whatever is on disk for this segment is all there
+        // is - and an empty file is the same news as no file. Both used to be
+        // read as something: a zero-byte last segment of a run or of a file was
+        // returned, and server.ts answered 200 with content-length 0, which
+        // hls.js cannot parse, so it asked again and each attempt paid for
+        // another run; a zero-byte segment anywhere else matched none of these
+        // branches at all and sat here until the 30 s deadline - measured at
+        // 30005 ms, which is the shape of the request left pending for 22 s.
+        //
+        // Empty means zero bytes and nothing else. A larger file cannot be told
+        // apart from a complete one by its size: the smallest whole segment
+        // measured here is 14 kB (one 854x480 frame, no audio) while a write cut
+        // off part way can be any size at all, so a threshold would refuse whole
+        // segments without catching partial ones. What catches those is the
+        // failed-run branch above and the muxer having moved on, not arithmetic
+        // on a byte count.
+        if ((await size(this.segmentPath(n))) > 0) return
+        // Removed, not just refused: segment() sends an existing file straight
+        // here without starting a run, so a zero-byte file left by a run that was
+        // killed just after opening it would fail every retry until prune()
+        // got to it. Safe only because no run is live to be writing it.
+        await unlink(this.segmentPath(n)).catch(() => {})
         throw new Error('the encoder produced nothing for this position')
       }
       if (Date.now() > deadline) throw new Error('timed out waiting for the encoder')
@@ -215,8 +259,8 @@ export class Session {
   private async maintain(n: number) {
     if (this.disposed) return
 
-    const nearEnd = this.proc !== null && n >= this.runStart + RUN_SEGMENTS - LOOKAHEAD_SEGMENTS
-    const runEnded = this.proc === null && this.runStart >= 0
+    const nearEnd = this.running && n >= this.runStart + RUN_SEGMENTS - LOOKAHEAD_SEGMENTS
+    const runEnded = !this.running && this.runStart >= 0
     const next = this.runStart + RUN_SEGMENTS
     if ((nearEnd || runEnded) && next < this.segmentCount && n >= this.runStart) {
       // Only chase forwards. A viewer who just seeked backwards will trigger
@@ -245,6 +289,7 @@ export class Session {
   private kill() {
     const proc = this.proc
     this.proc = null
+    this.running = false
     this.runStart = -1
     if (!proc) return
     proc.removeAllListeners()
@@ -257,11 +302,15 @@ export class Session {
 
   private startRun(from: number) {
     this.kill()
+    this.running = true
     this.runFailed = null
     this.runStart = from
+    const id = ++this.runId
 
     void capabilities().then((caps) => {
-      if (this.disposed || this.runStart !== from) return
+      // A newer run has taken this one's place, or the session is gone. Either
+      // way `running` belongs to whoever replaced it, so it is not cleared here.
+      if (this.disposed || this.runId !== id) return
 
       const start = from * SEGMENT_SECONDS
       const v = this.info.video
@@ -333,14 +382,22 @@ export class Session {
       proc.on('error', (err) => {
         if (this.proc !== proc) return
         this.proc = null
+        this.running = false
         this.runFailed = `could not start the encoder: ${err.message}`
       })
       proc.on('exit', (code) => {
         if (this.proc !== proc) return
         this.proc = null
+        this.running = false
         // Code 0 and being killed are both normal: a run always ends.
         if (code !== null && code !== 0) this.runFailed = stderr.trim() || `the encoder exited with code ${code}`
       })
+    }).catch((err: unknown) => {
+      // The probe or the spawn threw. Nothing will ever clear `running` for this
+      // run, so a request would poll the full 30 s and report a timeout.
+      if (this.disposed || this.runId !== id) return
+      this.running = false
+      this.runFailed = `could not start the encoder: ${err instanceof Error ? err.message : String(err)}`
     })
   }
 

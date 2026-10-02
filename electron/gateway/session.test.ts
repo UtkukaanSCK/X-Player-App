@@ -14,15 +14,21 @@ import type { MediaInfo, RoutePlan, VideoStream } from './types'
  * directory and the files in it. GPU detection is stubbed for the reason
  * plan.test.ts gives: what a machine has is not what is under test.
  */
+const probe = vi.hoisted(() => ({ ms: 0, fail: false }))
+
 vi.mock('./ffmpeg', () => ({
   FFMPEG: process.execPath,
-  capabilities: async () => ({
-    encoder: 'libx264',
-    hardware: false,
-    hwaccel: null,
-    encoderArgs: [],
-    rejected: [],
-  }),
+  capabilities: async () => {
+    if (probe.ms > 0) await new Promise((r) => setTimeout(r, probe.ms))
+    if (probe.fail) throw new Error('probe failed')
+    return {
+      encoder: 'libx264',
+      hardware: false,
+      hwaccel: null,
+      encoderArgs: [],
+      rejected: [],
+    }
+  },
 }))
 
 /**
@@ -263,5 +269,191 @@ describe('a file whose last segment would hold no frame', () => {
     // asking for it does start a run - the one above is the absence of this.
     await expect(s.segment(9)).rejects.toThrow(ENCODER_FAILURE)
     expect(spawned.count).toBe(before + 1)
+  })
+})
+
+/*
+ * The gap in front of the spawn. A run is asked for the moment segment() is
+ * called, but the process only exists once capabilities() has answered - a second
+ * or so on a cold cache, which probe.ms stands in for. 100 ms is wide enough that
+ * nothing below can land on the far side of it by luck, and short enough to keep
+ * the suite quick.
+ */
+describe('while the capability probe is still running', () => {
+  afterEach(() => {
+    probe.ms = 0
+    probe.fail = false
+  })
+
+  /*
+   * The regression. "Is a run in progress" was read off `proc`, which is null
+   * until the spawn, so two calls in the same tick each started their own run for
+   * the same position: two ffmpeg processes writing %d.ts into one directory, the
+   * first orphaned by the second's assignment to `proc` - never killed, never
+   * reported. Measured with a 50 ms probe: two spawns for two calls. The delta is
+   * asserted as exactly one, because "fewer than two" would pass for a session
+   * that started nothing.
+   */
+  it('starts one run for two requests that arrive in the same tick', async () => {
+    probe.ms = 100
+    const s = session()
+    const before = spawned.count
+
+    const settled = await Promise.allSettled([s.segment(5), s.segment(5)])
+
+    expect(spawned.count - before).toBe(1)
+    // Both waited for that one run, and both heard why it failed.
+    for (const r of settled) {
+      expect(r.status).toBe('rejected')
+      expect((r as PromiseRejectedResult).reason.message).toMatch(ENCODER_FAILURE)
+    }
+  })
+
+  /*
+   * The regression. With no process yet, the completion check read the run as
+   * over and found no file, so the request was refused with "the encoder produced
+   * nothing for this position" 1 ms after it was made - before any encoder had
+   * run. The only honest rejection here is the encoder's own, which arrives once
+   * the probe is done and the run has really failed (Node is the encoder, so it
+   * does).
+   */
+  it('makes a request wait for the run instead of refusing it as empty', async () => {
+    probe.ms = 100
+    const s = session()
+
+    const failure = await s.segment(7).then(
+      () => null,
+      (e: Error) => e.message,
+    )
+
+    expect(failure).toMatch(ENCODER_FAILURE)
+    expect(failure).not.toMatch(/produced nothing/)
+  })
+})
+
+describe('a segment file of zero bytes', () => {
+  /*
+   * The regression. A zero-byte segment is what a run leaves when it opens a
+   * file and never gets a frame into it. The old code returned one that was the
+   * last of its run or of the file, and server.ts answered 200 with
+   * content-length 0, which hls.js cannot parse, so it asked again and each
+   * attempt paid for another encoder run. It is refused as no file at all.
+   *
+   * Segment 9 is the last of this ten-segment film: the shape the old code
+   * returned outright.
+   */
+  it('is refused when it is the last segment of the file', async () => {
+    const s = session()
+    writeFileSync(join(s.dir, '9.ts'), '')
+
+    await expect(s.segment(9)).rejects.toThrow(/the encoder produced nothing/)
+  })
+
+  /*
+   * The other shape, which was a different bug: in the middle of the file, with
+   * nothing after it, the old code matched no branch and kept polling.
+   */
+  it('is refused when it is in the middle of the file', async () => {
+    const s = session()
+    writeFileSync(join(s.dir, '3.ts'), '')
+
+    await expect(s.segment(3)).rejects.toThrow(/the encoder produced nothing/)
+  })
+
+  /*
+   * The one that matters most. Before, the middle-of-the-file case sat in the
+   * wait loop until the 30 s deadline - measured at 30005 ms, which is the shape
+   * of the request the end-to-end suite left pending for 22 s. The request is
+   * raced against a one second timer, so a regression fails here saying the
+   * request was still pending rather than as a generic test timeout, and the
+   * test never waits 30 s.
+   */
+  it('is refused at once rather than after the 30 second deadline', async () => {
+    const s = session()
+    writeFileSync(join(s.dir, '3.ts'), '')
+
+    const started = Date.now()
+    const outcome = await settleWithin(s.segment(3), 1000)
+    const elapsed = Date.now() - started
+
+    expect(outcome).toMatch(/the encoder produced nothing/)
+    expect(elapsed).toBeLessThan(1000)
+  })
+
+  /*
+   * The regression the refusal above would otherwise cause. segment() sends an
+   * existing file straight to the wait without starting a run, so a zero-byte file
+   * left by a run killed just after it opened the file was refused on every
+   * retry, until prune() removed it twenty segments later. Refusing it deletes
+   * it, so the next request finds no file and starts the run that makes it. The
+   * spawn count says so: none for the refusal, exactly one for the retry.
+   */
+  it('is made again by the next request instead of failing forever', async () => {
+    const s = session()
+    writeFileSync(join(s.dir, '3.ts'), '')
+    const before = spawned.count
+
+    await expect(s.segment(3)).rejects.toThrow(/the encoder produced nothing/)
+    expect(spawned.count).toBe(before)
+
+    await expect(s.segment(3)).rejects.toThrow(ENCODER_FAILURE)
+    expect(spawned.count - before).toBe(1)
+  })
+})
+
+/** The request's outcome as a message, or a note that it was still pending after `ms`. */
+function settleWithin(request: Promise<string>, ms: number): Promise<string> {
+  return Promise.race([
+    request.then(
+      () => 'resolved',
+      (e: Error) => e.message,
+    ),
+    new Promise<string>((r) => setTimeout(() => r(`still pending after ${ms} ms`), ms)),
+  ])
+}
+
+describe('when a run cannot get as far as the encoder', () => {
+  afterEach(() => {
+    probe.ms = 0
+    probe.fail = false
+  })
+
+  /*
+   * The regression a flag for "a run is in progress" invites. If the capability
+   * probe throws, nothing ever clears it, and every request for that stretch
+   * polled for the full 30 s and failed as a timeout - where it should name the
+   * start failure at once. Raced against one second, so the failure says pending.
+   */
+  it('says the encoder could not start instead of waiting out the deadline', async () => {
+    probe.fail = true
+    const s = session()
+
+    const outcome = await settleWithin(s.segment(7), 1000)
+
+    expect(outcome).toMatch(/could not start the encoder: probe failed/)
+  })
+
+  /*
+   * The regression. Runs are told apart by their position, so segment(5), then
+   * segment(40), then segment(5) again leaves the first and the third both asked
+   * for position 5, and when the probe answered both of them spawned: two
+   * processes into one directory, the first orphaned by the second's assignment
+   * to `proc`. Measured: two spawns. A longer film, so 40 is in range.
+   */
+  it('starts one run when a request for a position is made, replaced, and made again', async () => {
+    probe.ms = 100
+    const s = session({ ...info, duration: 400 })
+    const before = spawned.count
+    const tick = () => new Promise((r) => setTimeout(r, 10))
+
+    // A pause between each, because segment() looks at the disk before it asks for a run.
+    const a = s.segment(5)
+    await tick()
+    const b = s.segment(40)
+    await tick()
+    const c = s.segment(5)
+    await Promise.allSettled([a, b, c])
+
+    expect(spawned.count - before).toBe(1)
   })
 })
