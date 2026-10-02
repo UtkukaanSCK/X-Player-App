@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { resolve } from 'node:path'
 
 /** Every suite in this project, run in order, with one summary at the end. */
-const SUITES = ['playback.mjs', 'queue.mjs', 'export.mjs', 'security.mjs']
+const SUITES = ['playback.mjs', 'queue.mjs', 'add.mjs', 'export.mjs', 'security.mjs']
 
 const failed = []
 

@@ -40,6 +40,9 @@ export function App() {
   /** The queue as it stands, so a drop can read it without re-arming the
       window-wide drop listeners on every queue change. */
   const queueRef = useRef<string[]>([])
+  /** Whether a film is on screen, and whether one is on its way, for the same reason. */
+  const mediaRef = useRef<OpenedMedia | null>(null)
+  const openingRef = useRef(0)
   /** Where to pick playback up after the source is rebuilt behind our back. */
   const resumeAtRef = useRef(0)
   /** Volume and speed, which belong to the viewer rather than to any one file. */
@@ -83,7 +86,10 @@ export function App() {
       setBusy(true)
       setProblem(null)
       setNotice(null)
-      const result = await window.desktop.open(path)
+      openingRef.current += 1
+      const result = await window.desktop.open(path).finally(() => {
+        openingRef.current -= 1
+      })
       setBusy(false)
       if (!result.ok) {
         // Deliberately not clearing media. Clicking a corrupt row used to swap
@@ -97,6 +103,7 @@ export function App() {
       // on the next one. Switching audio track reopens the same file and keeps
       // its own state, so it is not affected.
       setRange(null)
+      mediaRef.current = result.media
       setMedia(result.media)
       refreshRecent()
       return true
@@ -138,9 +145,11 @@ export function App() {
         return
       }
       // A drop while something is already playing extends the queue rather than
-      // interrupting it; an empty player starts playing straight away.
+      // interrupting it; a player with nothing loaded starts playing straight
+      // away. A queue can be non-empty with nothing playing, after a file failed
+      // to open, so what counts is the media, not the queue.
       const current = queueRef.current
-      if (current.length === 0) {
+      if (current.length === 0 || (mediaRef.current === null && openingRef.current === 0)) {
         play(files)
         return
       }
@@ -263,6 +272,12 @@ export function App() {
     const paths = await window.desktop.pick()
     if (paths.length > 0) play(await window.desktop.expand(paths))
   }, [play])
+
+  /** The queue's Add: what a drop does, without the drop. */
+  const addFiles = useCallback(async () => {
+    const paths = await window.desktop.pick()
+    if (paths.length > 0) await addPaths(paths)
+  }, [addPaths])
 
   const openFolder = useCallback(async () => {
     const paths = await window.desktop.pickFolder()
@@ -424,7 +439,7 @@ export function App() {
             index={index}
             onPick={goTo}
             onReorder={reorder}
-            onAdd={openFiles}
+            onAdd={addFiles}
             onClear={() => {
               setQueue(media ? [media.path] : [])
               setIndex(0)
