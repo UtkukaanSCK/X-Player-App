@@ -1,7 +1,8 @@
+import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import type { MediaInfo, RoutePlan } from './types'
+import type { MediaInfo, RoutePlan, VideoStream } from './types'
 
 /**
  * What a session serves after one of its encoder runs has failed.
@@ -24,11 +25,43 @@ vi.mock('./ffmpeg', () => ({
   }),
 }))
 
+/**
+ * How many child processes the session has started.
+ *
+ * Counting them is the only way to check that a run did *not* happen, which is
+ * what one test below is about: looking for files in the temp directory cannot
+ * tell a run that was never started from one that started and wrote nothing,
+ * and that is exactly the difference being asserted. The real spawn still does
+ * the work, so the other tests here keep their real failing child process.
+ */
+const spawned = vi.hoisted(() => ({ count: 0 }))
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  const counted = (command: string, args: readonly string[], options: SpawnOptions): ChildProcess => {
+    spawned.count += 1
+    return actual.spawn(command, args, options)
+  }
+  // spawn is a dozen overloads deep and the replacement covers only the one the
+  // session uses; the cast is what lets the other eleven keep their signatures.
+  return { ...actual, spawn: counted as typeof actual.spawn }
+})
+
 let Session: typeof import('./session').Session
 
 beforeAll(async () => {
   ;({ Session } = await import('./session'))
 })
+
+const video: VideoStream = {
+  index: 0,
+  codec: 'hevc',
+  profile: 'Main 10',
+  width: 1920,
+  height: 1080,
+  fps: 24,
+  pixFmt: 'yuv420p10le',
+}
 
 /** Forty seconds: ten four-second segments, so segment 7 is in range and well clear of 0 and 3. */
 const info: MediaInfo = {
@@ -37,7 +70,7 @@ const info: MediaInfo = {
   size: 1_000_000,
   container: 'matroska',
   duration: 40,
-  video: { index: 0, codec: 'hevc', profile: 'Main 10', width: 1920, height: 1080, fps: 24, pixFmt: 'yuv420p10le' },
+  video,
   audio: [{ index: 1, order: 0, codec: 'ac3', channels: 6, language: 'eng', title: 'English', isDefault: true }],
   subtitles: [],
 }
@@ -110,14 +143,17 @@ describe('after an encoder run has failed', () => {
 })
 
 /**
- * The same film, five milliseconds longer.
+ * The same film, five milliseconds longer - the shape of fixtures/hevc10-ac3.mkv.
  *
  * Forty-and-five-thousandths of a second cut into four-second segments leaves a
  * final slot 5 ms wide, and at 24 fps a frame lasts 42 ms: there is no frame
- * left to put in it. ffmpeg opens a segment only where a frame starts, so this
- * eleventh segment is one the encoder never writes - measured with the staged
- * binary on hevc10-ac3.mkv (40.005 s) and hd720.mkv (40.021 s), where a run
- * over the whole file produces ten segments and stops.
+ * left to put in it. The picture in that fixture ends at 40.000 - 959 frames
+ * spaced 1/24 s apart, the last starting at 39.958 - and the 5 ms on top of it
+ * belongs to the AC-3 track, whose last packet starts at 39.973 and runs 32 ms.
+ * ffmpeg opens a segment only where a frame starts, so this eleventh segment is
+ * one the encoder never writes: measured with the staged binary on that fixture
+ * and on hd720.mkv (40.021 s), where a run over the whole file produces ten
+ * segments and stops.
  */
 const shortTail: MediaInfo = { ...info, duration: 40.005 }
 
@@ -146,6 +182,60 @@ describe('a file whose last segment would hold no frame', () => {
   })
 
   /*
+   * The frame rate decides how much tail counts as empty, so a slow one is where
+   * that rule would break if it were going to. It does not: a container's
+   * duration spans the last frame's time on screen, so a 1 fps file whose last
+   * frame starts at exactly 40.000 is 41.000 s long - measured, that is what both
+   * the Matroska and the MP4 muxer write - and segmenting it with the staged
+   * binary and startRun's own arguments writes eleven segments, the eleventh
+   * holding that one frame.
+   *
+   * The 1 fps file whose eleventh segment does go is the one whose picture ends
+   * at 40.000 and whose soundtrack runs on to 40.521. ffmpeg writes ten segments
+   * for it, and nothing goes missing: the segment muxer cuts at video keyframes,
+   * so the 521 ms of audio past the picture ends up inside segment 9, which
+   * carries packets out to 40.490.
+   */
+  it('counts a slow frame rate by its own frames, not by a fixed cut-off', () => {
+    const slow: MediaInfo = { ...info, video: { ...video, fps: 1 } }
+    expect(promised({ ...slow, duration: 41 })).toBe(11)
+    expect(promised({ ...slow, duration: 40.521 })).toBe(10)
+  })
+
+  /*
+   * The floating-point edge, which is a real file and not only a duration built
+   * by arithmetic. ffprobe prints "40.040000" for a silent 25 fps file of 1001
+   * frames whose last frame starts at 40.000, and 40.04 - 10 * 4 lands at
+   * 0.03999999999999915, a hair under the 0.04 a frame lasts. Without the slack
+   * the playlist stopped at ten segments while a run over that file wrote eleven,
+   * the eleventh holding that frame - so the last frame of the film was simply
+   * not offered. 20, 30, 40 and 100 fps cancel the same way off a six-decimal
+   * duration; the second case here is the same cancellation at 24 fps, which
+   * needs a duration that came from arithmetic rather than from ffprobe.
+   */
+  it('does not lose a tail that is exactly one frame long', () => {
+    const pal: MediaInfo = { ...info, video: { ...video, fps: 25 }, duration: 40.04 }
+    expect(promised(pal)).toBe(11)
+    expect(promised({ ...info, duration: 40 + 1 / 24 })).toBe(11)
+  })
+
+  /*
+   * The two cases with no frame rate to measure a tail against: a file with no
+   * video stream at all - a podcast, an album - and one whose rate ffprobe could
+   * not work out. Both keep every segment the duration asks for, because an
+   * unknown rate is no evidence that the tail is empty, and an audio-only file
+   * has no frames to miss.
+   *
+   * Constructing the session at all is half the point. Reading `info.video.fps`
+   * without the guard throws here, and it would throw in the constructor - before
+   * the window had a playlist to show for the file it just opened.
+   */
+  it('keeps every segment when there is no frame rate to compare against', () => {
+    expect(promised({ ...shortTail, video: null })).toBe(11)
+    expect(promised({ ...shortTail, video: { ...video, fps: 0 } })).toBe(11)
+  })
+
+  /*
    * The regression. The playlist promised eleven segments, so hls.js asked for
    * the eleventh while buffering ahead - and asking for it started a whole
    * ffmpeg run at -ss 40 on a file that ends at 40.005. That run reads the
@@ -157,10 +247,21 @@ describe('a file whose last segment would hold no frame', () => {
    *
    * Refusing it outright is the only honest answer: no encoder run can produce
    * a frame that is not in the file. The rejection says "out of range" rather
-   * than anything about the encoder precisely because none was started.
+   * than anything about the encoder precisely because none was started, and the
+   * whole point of the change is the run that does not happen, so the count of
+   * started processes is what this checks - the message alone would have passed
+   * just as well with an ffmpeg run thrown away behind it.
    */
   it('refuses it at once instead of running the encoder past the end', async () => {
     const s = session(shortTail)
+    const before = spawned.count
+
     await expect(s.segment(10)).rejects.toThrow(/out of range/)
+    expect(spawned.count).toBe(before)
+
+    // And the counter is not simply stuck at nothing: segment 9 is in range, so
+    // asking for it does start a run - the one above is the absence of this.
+    await expect(s.segment(9)).rejects.toThrow(ENCODER_FAILURE)
+    expect(spawned.count).toBe(before + 1)
   })
 })

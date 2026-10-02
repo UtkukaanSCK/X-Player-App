@@ -347,13 +347,37 @@ export class Session {
 }
 
 /**
+ * Slack on the tail comparison below: one microsecond, the last digit ffprobe
+ * prints.
+ *
+ * Both sides of it are arrived at by arithmetic, and subtracting the segment
+ * boundary from the duration throws away the bottom of the mantissa. This is not
+ * only a worry about durations built by hand: ffprobe prints "40.040000" for a
+ * silent 25 fps file of 1001 frames (`testsrc2=size=854x480:rate=25
+ * -frames:v 1001`, the last frame at 40.000), and 40.04 - 10 * 4 comes out
+ * 0.03999999999999915 against a frame of 0.04, so the frame at 40.000 was
+ * dropped - while segmenting that file with the arguments startRun builds wrote
+ * eleven segments, the eleventh holding exactly that frame in 14 kB. 20, 30, 40
+ * and 100 fps land the same way.
+ *
+ * The cancellation to absorb is around 1e-14 at these durations. The slack is
+ * this much wider than that because a duration landing within one ffprobe tick
+ * below boundary-plus-a-frame is that frame rounded off rather than a shorter
+ * one, so keeping its segment is the right answer there too.
+ */
+const TAIL_SLACK_SECONDS = 1e-6
+
+/**
  * How many segments the file really has.
  *
  * Dividing the duration by the segment length and rounding up asks for one
- * segment too many whenever what is left over is shorter than a frame. ffmpeg
- * opens a segment where a frame starts and nowhere else, so a 40.005 s file at
- * 24 fps - whose last frame starts at 39.963 - gets ten segments and stops,
- * while the playlist promised eleven.
+ * segment too many whenever all that is left over is a stretch with no video
+ * frame in it. ffmpeg opens a segment where a frame starts and nowhere else, so
+ * fixtures/hevc10-ac3.mkv gets ten segments and stops while the playlist
+ * promised eleven: 959 frames spaced 1/24 s apart, the last starting at 39.958,
+ * so the picture ends at 40.000, and the 5 ms the container claims on top of
+ * that is its AC-3 track, whose last packet starts at 39.973 and runs 32 ms.
+ * fixtures/hd720.mkv, 40.021 s, is the same shape.
  *
  * Promising that eleventh one cost real time. hls.js asked for it while
  * buffering ahead, and asking started a whole ffmpeg run at -ss 40 that could
@@ -362,8 +386,25 @@ export class Session {
  * player could not parse, or no file at all, which failed the request. Then the
  * player asked again.
  *
- * Dropping it costs at most the last frame of a file, and only where that frame
- * did not make it into a segment anyway.
+ * Measuring the tail against one frame rather than against a fixed number of
+ * milliseconds is not a bet on how much time may be thrown away. A container's
+ * duration spans the last frame's time on screen, so a tail shorter than a frame
+ * is a tail with no frame in it however low the frame rate goes, and the two
+ * low-frame-rate shapes that could have shown otherwise were measured with the
+ * staged binary, segmenting the whole file with startRun's own arguments:
+ *
+ * - 1 fps, last frame at exactly 40.000. Such a file is 41.000 s long rather
+ *   than 40.5 (both the Matroska and the MP4 muxer write the duration that way),
+ *   so the tail is 1.000 s against a frame of 1.000 s and nothing is dropped.
+ *   Eleven segments promised, eleven written, the eleventh holding that frame.
+ * - 1 fps, 40.521 s, picture ending at 40.000 (video `testsrc2:rate=1 -t 40`
+ *   muxed with a 40.5 s sine track). Ten segments promised, ten written: the
+ *   521 ms left over is audio, and it is not lost but muxed into segment 9,
+ *   which carries packets out to 40.490.
+ *
+ * So an absolute cap on the tail would buy nothing and cost the second of those:
+ * any cap loose enough to bound the loss at 1 fps promises its empty eleventh
+ * segment back.
  */
 function segmentsIn(info: MediaInfo): number {
   const count = Math.max(1, Math.ceil(info.duration / SEGMENT_SECONDS))
@@ -371,7 +412,7 @@ function segmentsIn(info: MediaInfo): number {
   const frame = info.video && info.video.fps > 0 ? 1 / info.video.fps : 0
   // A file one segment long has nothing to drop, and without a frame rate there
   // is nothing to measure the tail against.
-  return count > 1 && tail < frame ? count - 1 : count
+  return count > 1 && tail < frame - TAIL_SLACK_SECONDS ? count - 1 : count
 }
 
 function delay(ms: number) {
